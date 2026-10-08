@@ -72,6 +72,10 @@ export function contactFields(kind) {
       { key: 'retainer', label: 'Budżet / retainer', placeholder: 'np. 8 000 zł / mies.' },
       { key: 'contractEnd', label: 'Koniec umowy', type: 'date' },
       { key: 'messages', label: 'Kluczowe przekazy marki', type: 'textarea', rows: 3, placeholder: 'Najważniejsze komunikaty, ton, słowa do unikania…' },
+      { key: 'legalName', label: 'Pełna nazwa firmy (do umów)', full: true },
+      { key: 'address', label: 'Adres siedziby', full: true },
+      { key: 'nip', label: 'NIP', inputmode: 'numeric' },
+      { key: 'representative', label: 'Osoba reprezentująca (do umów)' },
       common.notes,
     ];
     case 'influencer': return [
@@ -299,4 +303,25 @@ export function buildIcs(tasks) {
   }
   lines.push('END:VCALENDAR');
   return lines.map(fold).join('\r\n') + '\r\n';
+}
+
+// ---------- Google Calendar (server sync) ----------
+// Timed tasks: reminders as chosen per task type. All-day tasks: Google counts minutes back from
+// midnight, so "1 day before" becomes 08:00 the day before (and "morning of" also becomes 08:00 the day before).
+export function googleReminders(t) {
+  const mins = reminderMinutes(t);
+  if (t.time) return mins;
+  return [...new Set(mins.map((m) => (m <= 0 ? 960 : Math.max(0, m - 480))))];
+}
+
+/** Tasks that belong in this person's Google Calendar: their own and shared ones, not done, with a date. */
+export function calendarEvents() {
+  const from = addDays(todayStr(), -1);
+  return db.all('tasks')
+    .filter((t) => !t.done && t.due && t.due >= from && (t.owner === me() || t.owner === 'oba'))
+    .map((t) => ({
+      id: t.id, title: t.title, date: t.due, time: t.time || undefined,
+      durationMin: t.kind === 'wydarzenie' ? 120 : 60,
+      description: taskDetails(t), location: t.location || undefined, reminders: googleReminders(t),
+    }));
 }

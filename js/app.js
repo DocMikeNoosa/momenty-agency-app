@@ -12,8 +12,11 @@ import { renderToday } from './views/today.js';
 import { renderProjects, renderProject } from './views/projects.js';
 import { renderContacts, renderContact } from './views/contacts.js';
 import { renderFiles } from './views/files.js';
-import { renderAssistant, renderLetter, renderDoc, renderMockup } from './views/assistant.js';
+import { renderAssistant, renderLetter, renderDoc, renderMockup, sendCommand } from './views/assistant.js';
+import * as ai from './ai.js';
 import { renderSettings, loadDemo, deviceLabel } from './views/settings.js';
+import * as cloud from './cloud.js';
+import { joinForm, joinSheet } from './views/team.js';
 
 const app = document.getElementById('app');
 let unlocked = false;
@@ -40,7 +43,11 @@ async function boot() {
     app.append(h('div', { class: 'fatal' }, h('h1', null, 'Wymagane bezpieczne połączenie'), h('p', null, 'Otwórz aplikację przez adres https://.')));
     return;
   }
-  if (!auth.isSetUp()) showSetup(); else showLock();
+  cloud.setCalendarMapper(M.calendarEvents);
+  const r = current();
+  if (!auth.isSetUp()) {
+    if (r.name === 'dolacz') showJoin(location.hash.replace(/^#\/?/, '')); else showSetup();
+  } else showLock();
   registerSW();
 }
 
@@ -81,11 +88,27 @@ function showSetup() {
   app.append(brandScreen(
     h('h1', { class: 'brand-title' }, 'Witamy'),
     h('p', { class: 'brand-sub' }, 'Skonfiguruj aplikację na tym urządzeniu. Hasło chroni dostęp do danych agencji.'),
-    f));
+    f,
+    h('div', { class: 'or' }, 'lub'),
+    h('button', { class: 'btn btn-outline-cream btn-block', onclick: () => showJoin('') }, icon('link', 18), 'Mam zaproszenie do agencji')));
 }
 
-async function setupPasskeyStep() {
-  if (!(await auth.passkeyAvailable())) { setupDataStep(); return; }
+// Second partner (or a new device): join the agency with an invite link.
+function showJoin(prefill) {
+  clear(app);
+  app.append(brandScreen(
+    h('h1', { class: 'brand-title' }, 'Dołącz do agencji'),
+    h('p', { class: 'brand-sub' }, 'Wklej link zaproszenia od administratora i utwórz swoje konto. Dane agencji pobiorą się automatycznie.'),
+    joinForm({
+      prefill, dark: true, setLocalPassword: true,
+      onDone: () => { navigator.storage?.persist?.().catch(() => {}); history.replaceState(null, '', '#/dzis'); setupPasskeyStep(true); },
+    }),
+    h('button', { class: 'btn btn-link-cream btn-block', onclick: showSetup }, 'Wróć')));
+}
+
+async function setupPasskeyStep(joined = false) {
+  const next = joined ? () => enter() : setupDataStep;
+  if (!(await auth.passkeyAvailable())) { next(); return; }
   clear(app);
   const err = h('p', { class: 'form-error', role: 'alert' });
   app.append(brandScreen(
@@ -95,12 +118,12 @@ async function setupPasskeyStep() {
     err,
     h('button', { class: 'btn btn-cream btn-block', onclick: async () => {
       try {
-        await auth.registerPasskey(`${M.partnerName('p1')} – Momenty`, deviceLabel());
+        await auth.registerPasskey(`${M.partnerName(M.me())} – Momenty`, deviceLabel());
         toast('Klucz dostępu dodany');
-        setupDataStep();
+        next();
       } catch (e) { err.textContent = e.name === 'NotAllowedError' ? 'Anulowano. Możesz spróbować ponownie lub pominąć.' : (e.message || 'Nie udało się dodać klucza.'); }
     } }, icon('faceid', 20), 'Włącz klucz dostępu'),
-    h('button', { class: 'btn btn-link-cream btn-block', onclick: setupDataStep }, 'Pomiń – zrobię to później')));
+    h('button', { class: 'btn btn-link-cream btn-block', onclick: next }, 'Pomiń – zrobię to później')));
 }
 
 function setupDataStep() {
@@ -155,6 +178,7 @@ async function enter() {
   buildShell();
   if (!location.hash || location.hash === '#' || location.hash === '#/') navigate('dzis', { replace: true });
   render();
+  cloud.startAuto();
 }
 
 // auto-lock
@@ -210,7 +234,7 @@ function render(opts = {}) {
     switch (r.name) {
       case 'dzis': view = renderToday(); break;
       case 'projekty': view = renderProjects(); break;
-      case 'projekt': view = renderProject(r.params[0]); break;
+      case 'projekt': view = renderProject(r.params[0], r.query); break;
       case 'kontakty': view = renderContacts(r.params[0]); break;
       case 'kontakt': view = renderContact(r.params[0]); break;
       case 'pliki': view = renderFiles(); break;
@@ -221,6 +245,12 @@ function render(opts = {}) {
         break;
       case 'dokument': view = renderDoc(r.params[0]); break;
       case 'ustawienia': view = renderSettings(); break;
+      case 'dolacz': {
+        const prefill = r.raw;
+        navigate('ustawienia', { replace: true });
+        if (!cloud.isLinked()) setTimeout(() => joinSheet(prefill), 50); else toast('To urządzenie jest już połączone z agencją.');
+        return;
+      }
       default: navigate('dzis', { replace: true }); return;
     }
   } catch (e) {
@@ -231,12 +261,14 @@ function render(opts = {}) {
   const sameRoute = routeKey === lastRouteKey;
   // forms (letter, mock-up, document) keep their state: don't redraw them on background data changes
   if (sameRoute && opts.fromData && ['asystent/pismo', 'asystent/makieta', 'dokument'].some((p) => routeKey.startsWith(p))) return;
+  if (sameRoute && opts.fromData && document.activeElement?.closest('[data-keep]')) return;
   const y = window.scrollY;
   clear(shell.content).append(view.node);
   shell.titleEl.textContent = view.title;
   document.title = `${view.title} · Momenty`;
   clear(shell.actionsEl);
   if (view.action) shell.actionsEl.append(view.action);
+  if (cloud.isLinked()) shell.actionsEl.append(syncDot());
   if (!view.back) {
     shell.actionsEl.append(
       h('button', { class: 'icon-btn only-narrow', 'aria-label': 'Szukaj', onclick: openSearch }, icon('search')),
@@ -255,6 +287,19 @@ function render(opts = {}) {
     if (el) { el.focus({ preventScroll: true }); const n = el.value.length; try { el.setSelectionRange(n, n); } catch { /* search inputs */ } }
   }
 }
+
+function syncDot() {
+  const st = cloud.status();
+  const label = { syncing: 'Synchronizacja…', ok: 'Zsynchronizowano', offline: 'Offline – zmiany zostaną wysłane później', error: `Błąd synchronizacji: ${st.error || ''}`, signedout: 'Zaloguj się ponownie (Ustawienia)' }[st.phase] || 'Synchronizacja';
+  return h('button', { class: `icon-btn sync-dot sync-${st.phase}`, 'aria-label': label, title: label, onclick: () => {
+    if (st.phase === 'signedout') { navigate('ustawienia'); return; }
+    cloud.syncNow().then(() => toast('Zsynchronizowano')).catch((e) => toast(e.message));
+  } }, icon('sync', 20));
+}
+cloud.onStatus(() => {
+  const el = document.querySelector('.sync-dot');
+  if (el) el.replaceWith(syncDot());
+});
 
 function queueRender(opts) {
   if (renderQueued) return;
@@ -302,6 +347,11 @@ function quickAdd() {
       h('div', { class: 'qa-owner' }, h('span', { class: 'field-label' }, 'Dla kogo'), ownerSeg),
       h('div', { class: 'qa-row' },
         h('button', { class: 'btn btn-ghost', onclick: () => save(true) }, 'Więcej opcji'),
+        ai.available() ? h('button', { class: 'btn btn-soft', title: 'Asystent AI wykona polecenie (np. e-mail, kilka zadań naraz)', onclick: () => {
+          const text = input.value.trim();
+          if (!text) { input.focus(); toast('Wpisz lub podyktuj polecenie.'); return; }
+          s.close(); navigate('asystent'); sendCommand(text);
+        } }, icon('ai', 16), 'Z AI') : null,
         h('button', { class: 'btn btn-primary', onclick: () => save() }, 'Dodaj zadanie')),
       h('p', { class: 'hint-line' }, 'Rozpoznaję daty: dziś, jutro, pojutrze, w piątek, 12.10, za 3 dni, o 15, 15:30.'),
       h('div', { class: 'shortcuts' },

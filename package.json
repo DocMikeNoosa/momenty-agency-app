@@ -1,11 +1,12 @@
 {
   "name": "momenty-agency-app",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "description": "Aplikacja Momenty Agency (PWA)",
   "scripts": {
     "start": "npx --yes http-server -p 8080 -c-1 .",
-    "test": "node --test tests/unit.test.js && node tests/e2e.js"
+    "test": "node --test tests/unit.test.js && node tests/e2e.js",
+    "test:backend": "tests/backend/start.sh && node --test tests/backend/backend.test.js && tests/backend/start.sh && node tests/e2e-sync.js && tests/backend/start.sh && node tests/e2e-features.js; tests/backend/stop.sh"
   }
 }

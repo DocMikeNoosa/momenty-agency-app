@@ -4,12 +4,13 @@
 
 const DB_NAME = 'momenty-agency';
 const DB_VERSION = 1;
-export const COLLECTIONS = ['contacts', 'projects', 'tasks', 'files', 'docs', 'activity'];
+export const COLLECTIONS = ['contacts', 'projects', 'tasks', 'files', 'docs', 'activity', 'meta'];
 
 let db = null;
 const cache = Object.fromEntries(COLLECTIONS.map((c) => [c, new Map()]));
 const kvCache = new Map();
 const listeners = new Set();
+const writeListeners = new Set(); // local edits (used by cloud sync to know what to send)
 let actor = null; // id of the partner using this device
 
 export function uid() {
@@ -69,6 +70,8 @@ export async function loadRecords() {
 export function setActor(id) { actor = id; }
 
 export function onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
+export function onLocalWrite(fn) { writeListeners.add(fn); return () => writeListeners.delete(fn); }
+export function getRaw(col, id) { return cache[col]?.get(id) || null; }
 function emit(col) { listeners.forEach((fn) => { try { fn(col); } catch (e) { console.error(e); } }); }
 
 export function all(col, { includeDeleted = false } = {}) {
@@ -100,6 +103,7 @@ export async function put(col, data, { silent = false } = {}) {
   tx.objectStore('records').put(rec);
   await txDone(tx);
   cache[col].set(rec.id, rec);
+  writeListeners.forEach((fn) => { try { fn(col, rec); } catch (e) { console.error(e); } });
   if (!silent) emit(col);
   return rec;
 }
@@ -111,8 +115,9 @@ export async function remove(col, id) {
   await put(col, { id, deleted: true });
 }
 
-// Restores records from a backup; the newer updatedAt wins.
-export async function importRecords(records) {
+// Applies records from a backup or from the cloud; the newer updatedAt wins.
+// markLocal: treat them as local edits (so they are uploaded too), e.g. after restoring a backup.
+export async function importRecords(records, { markLocal = false } = {}) {
   await open();
   let n = 0;
   const tx = db.transaction('records', 'readwrite');
@@ -126,7 +131,8 @@ export async function importRecords(records) {
     n++;
   }
   await txDone(tx);
-  emit('*');
+  if (markLocal) for (const r of records) if (r && cache[r.col]?.get(r.id) === r) writeListeners.forEach((fn) => fn(r.col, r));
+  if (n) emit('*');
   return n;
 }
 

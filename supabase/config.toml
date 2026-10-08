@@ -1,0 +1,11 @@
+# Supabase CLI config for deploying the Edge Functions.
+# The functions verify the user's session themselves (and the OAuth callbacks must be reachable
+# directly from Google/Canva), so the gateway JWT check is disabled.
+[functions.ai]
+verify_jwt = false
+
+[functions.google]
+verify_jwt = false
+
+[functions.canva]
+verify_jwt = false

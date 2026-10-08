@@ -64,3 +64,38 @@ test('ics export with reminders', () => {
   assert.match(ics, /TRIGGER:-PT960M/); // all-day: 08:00 the day before
   for (const line of ics.split('\r\n')) assert.ok(line.length <= 75, `line too long: ${line}`);
 });
+
+test('letters to different companies are worded differently', async () => {
+  const { generate } = await import('../js/letters.js');
+  const opening = (contactId) => generate({ tpl: 'pitch', contactId, topic: 'Premiera serum', tone: 'formalny' }).body.split('\n\n')[1];
+  const ids = ['a1', 'b2', 'c3', 'd4', 'e5', 'f6', 'g7', 'h8'];
+  const variants = new Set(ids.map(opening));
+  assert.ok(variants.size >= 3, `expected varied openings, got ${variants.size}`);
+  assert.equal(opening('a1'), opening('a1'), 'same company always gets the same wording');
+  const fu = new Set(ids.map((id) => generate({ tpl: 'followup', contactId: id, topic: 'X', tone: 'formalny' }).body));
+  assert.ok(fu.size >= 3);
+});
+
+test('instagram lookup', async () => {
+  const { instagramLookup } = await import('../js/instagram.js');
+  assert.equal(instagramLookup('@ola.beauty').profileUrl, 'https://instagram.com/ola.beauty');
+  assert.equal(instagramLookup('https://www.instagram.com/kuba.eats/').handle, '@kuba.eats');
+  const r = instagramLookup('Ola Kamińska');
+  assert.equal(r.handle, null);
+  assert.match(r.searchUrl, /site%3Ainstagram\.com%20Ola%20Kami/);
+});
+
+test('google reminders for all-day tasks count back from midnight', async () => {
+  const { googleReminders } = await import('../js/model.js');
+  assert.deepEqual(googleReminders({ kind: 'termin', time: '09:00' }), [2880, 1440, 120]);
+  assert.deepEqual(googleReminders({ kind: 'zadanie' }), [960]); // 08:00 the day before
+  assert.deepEqual(googleReminders({ kind: 'termin' }), [2400, 960]); // 2 days and 1 day before at 08:00
+});
+
+test('pricing totals', async () => {
+  const { totals } = await import('../js/pricing.js');
+  const t = totals({ items: [{ qty: 2, price: 1000 }, { qty: 1, price: 500 }], vat: 23, discount: 10 });
+  assert.equal(t.sub, 2500);
+  assert.equal(t.net, 2250);
+  assert.equal(Math.round(t.gross * 100) / 100, 2767.5);
+});

@@ -7,6 +7,8 @@ import {
 import { section } from '../components.js';
 import { navigate } from '../router.js';
 import { APP_VERSION } from '../version.js';
+import * as cloud from '../cloud.js';
+import { teamSection, integrationsSection, agencySection, installSection } from './team.js';
 
 export function renderSettings() {
   const ps = M.partners();
@@ -31,9 +33,12 @@ export function renderSettings() {
     title: 'Ustawienia',
     back: 'dzis',
     node: h('div', { class: 'page page-narrow' },
-      section('Zespół', h('div', { class: 'set-group' },
+      cloud.isLinked() ? null : section('Zespół (to urządzenie)', h('div', { class: 'set-group' },
         row('Osoby w agencji', ps.map((p) => p.name).join(' i '), editTeam, 'users'),
         row('Na tym urządzeniu pracuje', M.partnerName(M.me()), editTeam, 'contacts'))),
+      teamSection(),
+      integrationsSection(),
+      agencySection(),
 
       section('Bezpieczeństwo', h('div', { class: 'set-group' },
         row('Zmień hasło', '', changePassword, 'lock'),
@@ -43,10 +48,8 @@ export function renderSettings() {
             [[1, '1 min'], [5, '5 min'], [15, '15 min'], [30, '30 min'], [60, '1 godz.']].map(([v, l]) => h('option', { value: v, selected: v === lockMin }, l)))),
         row('Zablokuj teraz', '', () => window.dispatchEvent(new Event('lock-now')), 'key'))),
 
-      section('Kalendarz Google', h('div', { class: 'set-group' },
-        h('div', { class: 'set-text' },
-          h('p', null, 'Każde zadanie z datą ma przycisk „Dodaj do Kalendarza Google”. Możesz też pobrać wszystkie nadchodzące zadania naraz jako plik kalendarza (.ics) i zaimportować go w Kalendarzu Google (Ustawienia → Importuj i eksportuj).'),
-          h('p', { class: 'muted small' }, 'Przypomnienia dobierane są do rodzaju zadania, np. termin/embargo: 2 dni i 1 dzień przed; spotkanie: 1 godz. i 15 min przed. Automatyczna synchronizacja z kalendarzem pojawi się w wersji 2.')),
+      section('Kalendarz – plik', h('div', { class: 'set-group' },
+        h('div', { class: 'set-text muted small' }, 'Bez połączenia z Kalendarzem Google możesz pobrać nadchodzące zadania jako plik .ics (z przypomnieniami) i zaimportować go w dowolnym kalendarzu.'),
         row('Pobierz nadchodzące zadania (.ics)', '', exportIcs, 'calendar'))),
 
       section('Kopia zapasowa', h('div', { class: 'set-group' },
@@ -54,7 +57,7 @@ export function renderSettings() {
         row('Pobierz kopię (bez plików)', '', () => exportBackup(false), 'download'),
         row('Pobierz pełną kopię (z plikami i zdjęciami)', '', () => exportBackup(true), 'download'),
         row('Przywróć z kopii', '', importBackup, 'upload'),
-        h('div', { class: 'set-text muted small' }, 'Dane są zapisane na tym urządzeniu. Zapisuj kopię regularnie (np. w iCloud Drive lub na Dysku Google). Synchronizacja w chmurze między Wami pojawi się po podłączeniu serwera (wersja 2).'))),
+        h('div', { class: 'set-text muted small' }, cloud.isLinked() ? 'Dane są synchronizowane z serwerem agencji (z codzienną kopią zapasową po stronie Supabase w planie Pro). Dodatkowa kopia w pliku nie zaszkodzi.' : 'Dane są zapisane tylko na tym urządzeniu. Zapisuj kopię regularnie (np. w iCloud Drive) albo połącz się z serwerem agencji.'))),
 
       section('Dane', h('div', { class: 'set-group' },
         row('Zajęte miejsce', storageEl, null, 'files'),
@@ -63,6 +66,7 @@ export function renderSettings() {
           : row('Załaduj dane przykładowe', '', async () => { await loadDemo(); toast('Dodano dane przykładowe'); navigate('dzis'); }, 'ai'),
         h('button', { class: 'set-row danger-text', onclick: wipe }, h('span', { class: 'row-ic' }, icon('trash', 20)), h('span', { class: 'set-label' }, 'Usuń wszystkie dane z tego urządzenia')))),
 
+      installSection(),
       h('p', { class: 'hint-line center' }, `Momenty Agency · wersja ${APP_VERSION}`)),
   };
 }
@@ -203,7 +207,7 @@ async function importBackup() {
       await db.putBlob(b.id, new Blob([bin], { type: b.type }));
       nb++;
     }
-    const n = await db.importRecords(data.records);
+    const n = await db.importRecords(data.records, { markLocal: true });
     toast(`Przywrócono ${n} wpisów${nb ? ` i ${nb} plików` : ''}`);
   });
   input.click();
@@ -212,6 +216,7 @@ async function importBackup() {
 async function wipe() {
   if (!(await confirmDialog('Wszystkie dane, pliki, hasło i klucze dostępu zostaną trwale usunięte z tego urządzenia. Zrób wcześniej kopię zapasową!', { title: 'Usunąć wszystko?', ok: 'Dalej', danger: true }))) return;
   if (!(await confirmDialog('Tej operacji nie można cofnąć. Na pewno?', { title: 'Ostatnie potwierdzenie', ok: 'Usuń wszystko', danger: true }))) return;
+  if (cloud.isLinked()) await cloud.signOut().catch(() => {});
   await db.wipeAll();
   location.hash = '';
   location.reload();

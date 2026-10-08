@@ -1,13 +1,94 @@
 import * as db from '../db.js';
 import * as M from '../model.js';
-import { TEMPLATES, generate } from '../letters.js';
+import { TEMPLATES, generate, aiLetter } from '../letters.js';
+import * as ai from '../ai.js';
+import { createConversation, TOOL_LABELS, LABEL_PATH } from '../agent.js';
 import {
   h, icon, buildForm, toast, emptyState, confirmDialog, relDay, shareOrDownload, clear,
 } from '../ui.js';
-import { section, blobUrl, saveFile, pickFiles } from '../components.js';
+import { section, blobUrl, saveFile, pickFiles, editTask } from '../components.js';
+import * as cloud from '../cloud.js';
 import { navigate } from '../router.js';
 
-// ---------- Hub ----------
+// ---------- Hub: AI command assistant + tools ----------
+let convo = null;
+const transcript = [];
+let busy = null;
+let draft = '';
+
+const SUGGESTIONS = [
+  'Co mam dziś do zrobienia?',
+  'Przypomnij mi jutro o 10, żeby zadzwonić do Magazynu Styl',
+  'Przygotuj follow-up do dziennikarki w sprawie premiery',
+  'Zaplanuj spotkanie z klientem w piątek o 14 dla nas obu',
+];
+
+function actionView(a) {
+  const path = a.col && LABEL_PATH[a.col] ? `${LABEL_PATH[a.col]}/${a.id}` : null;
+  const btns = [];
+  if (a.email) {
+    const q = (o) => Object.entries(o).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+    btns.push(h('a', { class: 'btn btn-primary', href: `mailto:${a.email.to || ''}?${q({ subject: a.email.subject, body: a.email.body })}` }, 'Wyślij'));
+    btns.push(h('a', { class: 'btn btn-soft', href: `https://mail.google.com/mail/?view=cm&fs=1&${q({ to: a.email.to || '', su: a.email.subject, body: a.email.body })}`, target: '_blank', rel: 'noopener' }, 'Gmail'));
+  }
+  if (a.col === 'tasks') {
+    const t = db.get('tasks', a.id);
+    if (t) btns.push(h('button', { class: 'btn btn-soft', onclick: () => editTask(t) }, 'Otwórz'));
+  } else if (path) btns.push(h('button', { class: 'btn btn-soft', onclick: () => navigate(path) }, 'Otwórz'));
+  if (a.href) btns.push(h('a', { class: 'btn btn-soft', href: a.href, target: '_blank', rel: 'noopener' }, 'Otwórz'));
+  if (a.undo) btns.push(h('button', { class: 'btn btn-ghost', onclick: async () => { await a.undo(); toast('Cofnięto'); } }, 'Cofnij'));
+  else if (a.col && a.id && db.get(a.col, a.id) && a.col !== 'docs') {
+    btns.push(h('button', { class: 'btn btn-ghost', onclick: async () => { await db.remove(a.col, a.id); toast('Usunięto'); window.dispatchEvent(new Event('rerender')); } }, 'Cofnij'));
+  }
+  return h('div', { class: 'act' }, icon(a.icon || 'check', 18), h('span', null, a.label), h('span', { class: 'act-btns' }, btns));
+}
+
+export async function sendCommand(text) {
+  if (!text.trim() || busy) return;
+  convo = convo || createConversation();
+  transcript.push({ role: 'user', text });
+  draft = '';
+  busy = 'Myślę…';
+  window.dispatchEvent(new Event('rerender'));
+  try {
+    const r = await convo.send(text, { onStep: (name) => { busy = TOOL_LABELS[name] || 'Pracuję…'; const el = document.querySelector('.thinking span:last-child'); if (el) el.textContent = busy; } });
+    transcript.push({ role: 'ai', text: r.text, actions: r.actions });
+    const nav = r.actions.find((a) => a.navigate);
+    busy = null;
+    if (nav) { navigate(nav.navigate); return; }
+  } catch (e) {
+    transcript.push({ role: 'ai', text: e.message, actions: [] });
+  }
+  busy = null;
+  window.dispatchEvent(new Event('rerender'));
+}
+
+function agentPanel() {
+  const ta = h('textarea', { placeholder: 'Powiedz lub napisz, co zrobić…', 'aria-label': 'Polecenie dla asystenta', rows: 3, id: 'agent-input', enterkeyhint: 'send',
+    oninput: (e) => { draft = e.target.value; },
+    onkeydown: (e) => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer: fine)').matches) { e.preventDefault(); sendCommand(ta.value); } } });
+  ta.value = draft;
+  let stop = null;
+  const mic = ai.canDictate() ? h('button', { class: 'mic', type: 'button', 'aria-label': 'Dyktuj', onclick: () => {
+    if (stop) { stop(); return; }
+    mic.classList.add('rec');
+    const base = ta.value ? `${ta.value} ` : '';
+    stop = ai.dictate({ onText: (t) => { ta.value = base + t; draft = ta.value; }, onEnd: () => { mic.classList.remove('rec'); stop = null; } });
+  } }, icon('mic', 22)) : h('span', { class: 'small muted' }, '🎙 Dyktuj mikrofonem na klawiaturze');
+  const chips = transcript.length ? null : h('div', { class: 'chips' }, SUGGESTIONS.map((t) => h('button', { class: 'chip-btn', onclick: () => sendCommand(t) }, t)));
+  const msgs = transcript.map((m) => (m.role === 'user'
+    ? h('div', { class: 'msg msg-user' }, m.text)
+    : h('div', { class: 'msg msg-ai' }, m.text || 'Gotowe.', m.actions?.length ? h('div', { class: 'actions' }, m.actions.filter((a) => !a.navigate).map(actionView)) : null)));
+  return h('div', { class: 'agent' },
+    ...msgs,
+    busy ? h('div', { class: 'msg msg-ai thinking' }, h('span', { class: 'spinner' }), h('span', null, busy)) : null,
+    h('div', { class: 'agent-box', dataset: { keep: '1' } }, ta,
+      h('div', { class: 'agent-bar' }, mic,
+        transcript.length ? h('button', { class: 'btn btn-ghost btn-sm', onclick: () => { transcript.length = 0; convo = null; window.dispatchEvent(new Event('rerender')); } }, 'Nowa rozmowa') : null,
+        h('button', { class: 'btn btn-primary', disabled: !!busy, onclick: () => sendCommand(ta.value) }, 'Wykonaj'))),
+    chips);
+}
+
 export function renderAssistant() {
   const docs = db.all('docs').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const card = (ic, title, text, onclick) => h('button', { class: 'tool-card', onclick },
@@ -15,16 +96,17 @@ export function renderAssistant() {
 
   return {
     title: 'Asystent',
-    node: h('div', { class: 'page' },
-      h('div', { class: 'tools' },
-        card('doc', 'Napisz pismo', 'Pitch, informacja prasowa, brief, zaproszenie, follow-up, oferta…', () => navigate('asystent/pismo')),
-        card('instagram', 'Makieta posta', 'Podgląd posta lub relacji na Instagramie dla klienta – gotowy do wysłania.', () => navigate('asystent/makieta'))),
-      h('div', { class: 'notice notice-ai' }, icon('ai', 22),
+    node: h('div', { class: 'page page-narrow' },
+      ai.available() ? agentPanel() : h('div', { class: 'notice notice-ai' }, icon('ai', 22),
         h('div', null,
-          h('strong', null, 'Asystent AI – w przygotowaniu'),
-          h('div', { class: 'small' }, 'Pisma powstają teraz z gotowych szablonów uzupełnianych danymi klienta i projektu. Po podłączeniu konta AI (wersja 2) asystent będzie pisał teksty od zera, proponował pomysły i tematy oraz streszczał briefy.'))),
-      section(`Zapisane dokumenty (${docs.length})`, docs.length ? h('div', { class: 'list' }, docs.map((d) => h('button', { class: 'list-row', onclick: () => navigate(`dokument/${d.id}`) },
-        h('span', { class: 'row-ic' }, icon('doc', 20)),
+          h('strong', null, 'Asystent AI'),
+          h('div', { class: 'small' }, 'Po połączeniu z serwerem agencji asystent wykona polecenia głosowe i pisane: doda zadania z przypomnieniami w Kalendarzu Google, przygotuje e-maile, utworzy projekty i kontakty, znajdzie osoby na Instagramie.')),
+        h('button', { class: 'btn btn-soft btn-sm', onclick: () => navigate('ustawienia') }, 'Połącz')),
+      h('div', { class: 'tools' },
+        card('doc', 'Napisz pismo', 'Pitch, informacja prasowa, brief, zaproszenie, follow-up, oferta – z AI lub z szablonu.', () => navigate('asystent/pismo')),
+        card('instagram', 'Makieta posta', 'Podgląd posta lub relacji na Instagramie dla klienta – gotowy do wysłania.', () => navigate('asystent/makieta'))),
+      section(`Dokumenty (${docs.length})`, docs.length ? h('div', { class: 'list' }, docs.slice(0, 30).map((d) => h('button', { class: 'list-row', onclick: () => navigate(`dokument/${d.id}`) },
+        h('span', { class: 'row-ic' }, icon(d.kind === 'contract' ? 'file' : d.kind === 'email' ? 'mail' : 'doc', 20)),
         h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, d.title),
           h('div', { class: 'row-meta' }, [db.get('contacts', d.contactId)?.name, relDay(d.updatedAt.slice(0, 10))].filter(Boolean).join(' · '))),
         icon('chevron', 18, 'muted'))))
@@ -62,7 +144,17 @@ export function renderLetter(query) {
   const subject = h('input', { type: 'text', class: 'out-subject', 'aria-label': 'Temat wiadomości' });
   const body = h('textarea', { class: 'out-body', rows: 18, 'aria-label': 'Treść pisma' });
   let edited = false;
-  const regenBtn = h('button', { class: 'btn btn-soft btn-sm', hidden: true, onclick: () => { edited = false; regen(); } }, icon('sync', 16), 'Wygeneruj ponownie');
+  const regenBtn = h('button', { class: 'btn btn-soft btn-sm', hidden: true, onclick: () => { edited = false; regen(); } }, icon('sync', 16), 'Z szablonu');
+  const aiBtn = h('button', { class: 'btn btn-primary btn-sm', onclick: async () => {
+    if (!ai.available()) { toast('AI działa po połączeniu z serwerem agencji (Ustawienia).'); return; }
+    aiBtn.disabled = true; aiBtn.textContent = 'AI pisze…';
+    try {
+      const r = await aiLetter(form.read());
+      subject.value = r.subject; body.value = r.body; edited = true; regenBtn.hidden = false;
+      toast('Gotowe – przeczytaj i dopracuj przed wysłaniem');
+    } catch (e) { toast(e.message); }
+    aiBtn.disabled = false; aiBtn.textContent = 'Napisz z AI';
+  } }, 'Napisz z AI');
   body.addEventListener('input', () => { edited = true; regenBtn.hidden = false; });
   subject.addEventListener('input', () => { edited = true; regenBtn.hidden = false; });
 
@@ -93,6 +185,7 @@ export function renderLetter(query) {
       const r = recipient();
       location.href = `mailto:${r?.email || ''}?subject=${encodeURIComponent(subject.value)}&body=${encodeURIComponent(body.value)}`;
     } }, icon('mail', 18), 'E-mail'),
+    h('button', { class: 'btn btn-soft', onclick: () => window.open(gmailUrl(recipient()?.email, subject.value, body.value), '_blank', 'noopener') }, 'Gmail'),
     navigator.share ? h('button', { class: 'btn btn-soft', onclick: () => navigator.share({ title: subject.value, text: body.value }).catch(() => {}) }, icon('share', 18), 'Udostępnij') : null,
     h('button', { class: 'btn btn-soft', onclick: () => printLetter(subject.value, body.value) }, icon('print', 18), 'PDF / drukuj'),
     h('button', { class: 'btn btn-primary', onclick: async () => {
@@ -114,12 +207,17 @@ export function renderLetter(query) {
         h('div', { class: 'col' }, h('div', { class: 'card pad-card' }, form.el, hintEl)),
         h('div', { class: 'col' },
           h('div', { class: 'card pad-card letter-out' },
-            h('div', { class: 'section-head' }, h('h3', null, 'Gotowy tekst'), regenBtn),
+            h('div', { class: 'section-head' }, h('h3', null, 'Gotowy tekst'), h('div', { class: 'row-gap' }, regenBtn, aiBtn)),
             h('label', { class: 'field field-full' }, h('span', { class: 'field-label' }, 'Temat'), subject),
             h('label', { class: 'field field-full' }, h('span', { class: 'field-label' }, 'Treść (możesz edytować)'), body),
             h('p', { class: 'hint-line' }, 'Fragmenty w [nawiasach] uzupełnij przed wysłaniem.')),
           actions))),
   };
+}
+
+export function gmailUrl(to, subject, body) {
+  const q = new URLSearchParams({ view: 'cm', fs: '1', to: to || '', su: subject || '', body: body || '' });
+  return `https://mail.google.com/mail/?${q}`;
 }
 
 export function printLetter(title, body) {
@@ -163,10 +261,12 @@ export function renderDoc(id) {
       h('div', { class: 'card pad-card' },
         h('label', { class: 'field field-full' }, h('span', { class: 'field-label' }, 'Tytuł / temat'), title),
         h('label', { class: 'field field-full' }, h('span', { class: 'field-label' }, 'Treść'), body),
+        d.kind === 'contract' ? h('p', { class: 'notice small' }, icon('flag', 18), 'Projekt umowy przygotowany automatycznie. Uzupełnij pola [uzupełnij] i sprawdź treść (najlepiej z prawnikiem) przed podpisaniem.') : null,
         h('p', { class: 'hint-line' }, [c ? `Odbiorca: ${c.name} · ` : '', `Ostatnia zmiana: ${M.partnerName(d.updatedBy) || '—'}, ${new Date(d.updatedAt).toLocaleString('pl-PL')}`])),
       h('div', { class: 'sheet-actions sticky-actions' },
         h('button', { class: 'btn btn-soft', onclick: async () => { try { await navigator.clipboard.writeText(`${title.value}\n\n${body.value}`); toast('Skopiowano'); } catch { toast('Nie udało się skopiować'); } } }, icon('copy', 18), 'Kopiuj'),
-        h('button', { class: 'btn btn-soft', onclick: () => { location.href = `mailto:${c?.email || ''}?subject=${encodeURIComponent(title.value)}&body=${encodeURIComponent(body.value)}`; } }, icon('mail', 18), 'E-mail'),
+        h('button', { class: 'btn btn-soft', onclick: () => { location.href = `mailto:${d.to || c?.email || ''}?subject=${encodeURIComponent(title.value)}&body=${encodeURIComponent(body.value)}`; } }, icon('mail', 18), 'E-mail'),
+        h('button', { class: 'btn btn-soft', onclick: () => window.open(gmailUrl(d.to || c?.email, title.value, body.value), '_blank', 'noopener') }, 'Gmail'),
         h('button', { class: 'btn btn-soft', onclick: () => printLetter(title.value, body.value) }, icon('print', 18), 'PDF / drukuj'),
         h('button', { class: 'btn btn-primary', onclick: save }, 'Zapisz'))),
   };
@@ -225,7 +325,7 @@ export function renderMockup(query) {
     const f = db.get('files', state.imageId);
     bitmap = null;
     if (f) {
-      const b = await db.getBlob(f.blobId);
+      const b = (await db.getBlob(f.blobId)) || (await cloud.downloadBlob(f.blobId));
       if (b) {
         try { bitmap = await createImageBitmap(b); } catch {
           bitmap = await new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = URL.createObjectURL(b); });

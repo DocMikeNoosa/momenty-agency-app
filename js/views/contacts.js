@@ -1,10 +1,37 @@
 import * as db from '../db.js';
 import * as M from '../model.js';
-import { h, icon, emptyState, confirmDialog, toast, fullDate, fmtNumber, stars, relDay } from '../ui.js';
+import { h, icon, emptyState, confirmDialog, toast, fullDate, fmtNumber, stars, relDay, clear } from '../ui.js';
 import {
   contactRow, editContact, avatar, contactActions, section, taskRow, editTask, filesGrid, uploadFlow, progressBar,
 } from '../components.js';
 import { navigate } from '../router.js';
+import { instagramLookup } from '../instagram.js';
+import { openSheet, buildForm } from '../ui.js';
+
+/** Look someone up on Instagram; optionally save the handle on a contact. */
+export function instagramSheet(contact = null) {
+  const input = h('input', { type: 'search', placeholder: 'Imię i nazwisko, marka lub @nazwa', 'aria-label': 'Kogo szukasz na Instagramie', value: contact?.name || '' });
+  const out = h('div', { class: 'col' });
+  const draw = () => {
+    const r = instagramLookup(input.value);
+    clear(out);
+    if (!input.value.trim()) return;
+    if (r.handle) out.append(h('a', { class: 'btn btn-primary btn-block', href: r.profileUrl, target: '_blank', rel: 'noopener' }, icon('instagram', 18), `Otwórz profil ${r.handle}`));
+    out.append(h('a', { class: `btn ${r.handle ? 'btn-soft' : 'btn-primary'} btn-block`, href: r.searchUrl, target: '_blank', rel: 'noopener' }, icon('search', 18), 'Szukaj na Instagramie (przez Google)'));
+    if (contact && r.handle) {
+      out.append(h('button', { class: 'btn btn-ghost btn-block', onclick: async () => {
+        await db.put('contacts', { id: contact.id, instagram: r.handle }); s.close(); toast(`Zapisano ${r.handle}`);
+      } }, `Zapisz ${r.handle} w kontakcie`));
+    }
+  };
+  input.addEventListener('input', draw);
+  const s = openSheet({
+    title: 'Instagram',
+    body: [input, out,
+      h('p', { class: 'hint-line' }, contact ? 'Gdy znajdziesz profil, skopiuj nazwę konta (np. @ola.beauty), wpisz ją powyżej i zapisz w kontakcie.' : 'Wpisz @nazwę konta, aby od razu otworzyć profil.')],
+  });
+  draw();
+}
 
 let search = '';
 
@@ -41,7 +68,9 @@ export function renderContacts(kindParam) {
 
   return {
     title: 'Kontakty',
-    action: h('button', { class: 'btn btn-primary btn-sm', onclick: () => editContact(null, kind) }, icon('plus', 16), 'Nowy'),
+    action: h('div', { class: 'head-actions' },
+      h('button', { class: 'icon-btn', 'aria-label': 'Szukaj na Instagramie', title: 'Szukaj na Instagramie', onclick: () => instagramSheet() }, icon('instagram')),
+      h('button', { class: 'btn btn-primary btn-sm', onclick: () => editContact(null, kind) }, icon('plus', 16), 'Nowy')),
     node: h('div', { class: 'page' }, tabs, h('div', { class: 'toolbar' }, searchBox), list),
   };
 }
@@ -79,7 +108,8 @@ export function renderContact(id) {
     h('div', { class: 'detail-kicker' }, M.kindLabel(c.kind)),
     h('h1', { class: 'detail-title' }, c.name),
     M.contactSubtitle(c) ? h('div', { class: 'muted' }, M.contactSubtitle(c)) : null,
-    contactActions(c));
+    contactActions(c),
+    !c.instagram ? h('button', { class: 'link-btn', onclick: () => instagramSheet(c) }, icon('instagram', 16), 'Znajdź na Instagramie') : null);
 
   return {
     title: c.name,

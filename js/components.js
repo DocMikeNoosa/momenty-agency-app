@@ -6,6 +6,7 @@ import {
   h, icon, openSheet, buildForm, toast, confirmDialog, relDay, todayStr, addDays, initials, stars, clear, fmtBytes,
 } from './ui.js';
 import { navigate } from './router.js';
+import * as cloud from './cloud.js';
 
 // ---------- Avatars / badges ----------
 export function avatar(name, { kind, size = 40, photoUrl } = {}) {
@@ -339,7 +340,8 @@ const urlCache = new Map();
 export async function blobUrl(id) {
   if (!id) return null;
   if (urlCache.has(id)) return urlCache.get(id);
-  const b = await db.getBlob(id);
+  // photos added on the other partner's device are fetched from the agency's storage on first view
+  const b = (await db.getBlob(id)) || (await cloud.downloadBlob(id));
   if (!b) return null;
   const u = URL.createObjectURL(b);
   urlCache.set(id, u);
@@ -379,7 +381,7 @@ export async function openFile(f) {
       h('div', { class: 'viewer' }, media),
       h('div', { class: 'sheet-actions' },
         h('button', { class: 'btn btn-soft', onclick: async () => {
-          const b = await db.getBlob(f.blobId);
+          const b = (await db.getBlob(f.blobId)) || (await cloud.downloadBlob(f.blobId));
           const { shareOrDownload } = await import('./ui.js');
           if (b) shareOrDownload(b, f.name, f.caption || f.name);
         } }, icon('share', 18), 'Udostępnij / pobierz'),
