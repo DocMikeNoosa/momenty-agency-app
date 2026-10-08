@@ -1,5 +1,5 @@
 // Offline support: the whole app is cached so it opens without a connection.
-const VERSION = 'momenty-v3.0.0';
+const VERSION = 'momenty-v3.0.1';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/db.js', 'js/auth.js', 'js/ui.js', 'js/model.js', 'js/router.js', 'js/components.js', 'js/letters.js', 'js/version.js',

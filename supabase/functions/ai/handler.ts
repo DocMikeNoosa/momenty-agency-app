@@ -18,7 +18,7 @@ async function countCall(userId: string) {
 }
 
 export const handler = handle(async (req) => {
-  if (req.method !== 'POST') throw new HttpError(405, 'POST only');
+  if (req.method !== 'POST') throw new HttpError(405, 'Nieobsługiwana metoda');
   const member = await requireMember(req);
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) throw new HttpError(503, 'AI nie jest skonfigurowane (brak ANTHROPIC_API_KEY na serwerze).');
@@ -51,7 +51,7 @@ export const handler = handle(async (req) => {
   } catch (e) {
     if (e instanceof Anthropic.RateLimitError) throw new HttpError(429, 'AI jest chwilowo przeciążone – spróbuj za minutę.');
     if (e instanceof Anthropic.AuthenticationError) throw new HttpError(503, 'Nieprawidłowy klucz API AI na serwerze.');
-    if (e instanceof Anthropic.BadRequestError) throw new HttpError(400, `AI odrzuciło zapytanie: ${e.message}`);
+    if (e instanceof Anthropic.BadRequestError) { console.error('AI 400:', e.message); throw new HttpError(400, 'AI odrzuciło zapytanie (np. za długie). Spróbuj krócej lub inaczej.'); }
     if (e instanceof Anthropic.APIError) throw new HttpError(502, `Błąd AI (${e.status}).`);
     throw e;
   }

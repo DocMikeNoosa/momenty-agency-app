@@ -35,7 +35,7 @@ export async function db(path: string, init: RequestInit = {}): Promise<any> {
     },
   });
   const text = await res.text();
-  if (!res.ok) throw new HttpError(500, `DB ${res.status}: ${text}`);
+  if (!res.ok) { console.error(`DB ${res.status}:`, text); throw new HttpError(500, `Błąd bazy danych (kod ${res.status}).`); }
   return text ? JSON.parse(text) : null;
 }
 

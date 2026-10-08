@@ -152,7 +152,7 @@ export const handler = handle(async (req) => {
         await new Promise((r) => setTimeout(r, 1500));
         job = (await canva(member.user_id, `/v1/exports/${encodeURIComponent(job.id)}`)).job;
       }
-      if (job.status !== 'success' || !job.urls?.length) throw new HttpError(502, `Eksport z Canvy nie powiódł się${job.error?.message ? `: ${job.error.message}` : ''}.`);
+      if (job.status !== 'success' || !job.urls?.length) { if (job.error) console.error('Canva export:', JSON.stringify(job.error)); throw new HttpError(502, 'Eksport z Canvy nie powiódł się. Spróbuj ponownie za chwilę.'); }
       const file = await fetch(job.urls[0]);
       if (!file.ok) throw new HttpError(502, 'Nie udało się pobrać pliku z Canvy.');
       const buf = new Uint8Array(await file.arrayBuffer());

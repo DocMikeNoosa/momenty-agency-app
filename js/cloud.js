@@ -83,12 +83,12 @@ async function http(path, { method = 'GET', body, auth = true, headers = {}, raw
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!res.ok) {
     const msg = data?.msg || data?.message || data?.error_description || data?.error || `Błąd ${res.status}`;
-    throw new CloudError(res.status, translate(String(msg)));
+    throw new CloudError(res.status, translate(String(msg), res.status));
   }
   return data;
 }
 
-function translate(msg) {
+function translate(msg, status = 0) {
   const map = [
     [/invalid login credentials/i, 'Nieprawidłowy e-mail lub hasło.'],
     [/user already registered|already been registered/i, 'Konto z tym e-mailem już istnieje – wybierz „Mam już konto”.'],
@@ -100,9 +100,23 @@ function translate(msg) {
     [/only an admin/i, 'Tylko administrator może to zrobić.'],
     [/not a member/i, 'To konto nie należy do agencji.'],
     [/rate limit/i, 'Zbyt wiele prób – odczekaj chwilę.'],
+    [/not signed in/i, 'Zaloguj się ponownie.'],
+    [/bad role/i, 'Nieprawidłowa rola.'],
+    [/slot already taken/i, 'To miejsce w zespole jest już zajęte.'],
+    [/cannot remove yourself/i, 'Nie możesz usunąć samej siebie.'],
+    [/bad batch/i, 'Nieprawidłowe dane do synchronizacji.'],
+    [/jwt expired|token.*expired|refresh token/i, 'Sesja wygasła – zaloguj się ponownie.'],
+    [/user not found/i, 'Nie ma konta z tym adresem e-mail.'],
+    [/signups? not allowed|signup.*disabled/i, 'Zakładanie kont jest wyłączone na serwerze (Supabase → Authentication).'],
+    [/weak password|password.*(characters|weak|pwned)/i, 'Hasło jest za słabe – użyj dłuższego, z literami i cyframi.'],
+    [/invalid.*email|email.*invalid|unable to validate email/i, 'Nieprawidłowy adres e-mail.'],
+    [/invalid api key|no api key/i, 'Nieprawidłowy klucz publiczny serwera – sprawdź go w Ustawieniach.'],
   ];
   for (const [re, pl] of map) if (re.test(msg)) return pl;
-  return msg;
+  // the app is Polish-only: never show an untranslated technical message
+  const polish = /[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/.test(msg) || /^(brak|nie|tylko|błąd|konto|sesja|zaproszenie|agencja|kalendarz|canva)\b/i.test(msg);
+  if (polish) return msg;
+  return `Serwer zgłosił błąd${status ? ` (kod ${status})` : ''}. Spróbuj ponownie za chwilę.`;
 }
 
 // ---------- auth ----------

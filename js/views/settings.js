@@ -175,7 +175,7 @@ async function managePasskeys() {
         try {
           await auth.registerPasskey(`${M.partnerName(M.me())} – Momenty`, deviceLabel());
           s.close(); toast('Klucz dostępu dodany'); window.dispatchEvent(new Event('rerender'));
-        } catch (e) { if (e.name !== 'NotAllowedError') toast(e.message || 'Nie udało się dodać klucza.'); else toast('Anulowano.'); }
+        } catch (e) { toast(e.name === 'NotAllowedError' ? 'Anulowano.' : /[ąćęłńóśźż]/i.test(e.message || '') ? e.message : 'Nie udało się dodać klucza dostępu.'); }
       } }, icon('faceid', 18), 'Dodaj klucz dostępu') : null],
   });
 }
