@@ -25,7 +25,8 @@ export function renderFiles() {
   }
 
   return {
-    title: 'Pliki',
+    title: 'Pliki i zdjęcia',
+    back: 'wiecej',
     node: h('div', { class: 'page' }, uploadBar, seg,
       files.length ? h('div', null, [...groups].map(([k, fs]) => h('section', { class: 'section' },
         h('div', { class: 'section-head' }, h('h3', null, k), h('span', { class: 'muted small' }, fs.length)), filesGrid(fs))))

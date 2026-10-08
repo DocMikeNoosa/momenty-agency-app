@@ -132,5 +132,5 @@ function backupReminder() {
   return h('div', { class: 'notice' }, icon('download', 20),
     h('div', null, h('strong', null, 'Zrób kopię zapasową'),
       h('div', { class: 'small' }, last ? `Ostatnia kopia: ${plural(days, 'dzień', 'dni', 'dni')} temu.` : 'Dane są na razie zapisane tylko na tym urządzeniu.')),
-    h('button', { class: 'btn btn-soft btn-sm', onclick: () => navigate('ustawienia') }, 'Kopia'));
+    h('button', { class: 'btn btn-soft btn-sm', onclick: () => navigate('ustawienia/kopia') }, 'Kopia'));
 }

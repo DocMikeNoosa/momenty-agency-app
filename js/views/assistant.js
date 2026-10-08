@@ -2,115 +2,34 @@ import * as db from '../db.js';
 import * as M from '../model.js';
 import { TEMPLATES, generate, aiLetter } from '../letters.js';
 import * as ai from '../ai.js';
-import { createConversation, TOOL_LABELS, LABEL_PATH } from '../agent.js';
+import { assistantPanel } from '../assist.js';
 import {
   h, icon, buildForm, toast, emptyState, confirmDialog, relDay, shareOrDownload, clear,
 } from '../ui.js';
-import { section, blobUrl, saveFile, pickFiles, editTask } from '../components.js';
+import { section, blobUrl, saveFile, pickFiles } from '../components.js';
 import * as cloud from '../cloud.js';
 import { navigate } from '../router.js';
 
-// ---------- Hub: AI command assistant + tools ----------
-let convo = null;
-const transcript = [];
-let busy = null;
-let draft = '';
-
-const SUGGESTIONS = [
-  'Co mam dziś do zrobienia?',
-  'Przypomnij mi jutro o 10, żeby zadzwonić do Magazynu Styl',
-  'Przygotuj follow-up do dziennikarki w sprawie premiery',
-  'Zaplanuj spotkanie z klientem w piątek o 14 dla nas obu',
-];
-
-function actionView(a) {
-  const path = a.col && LABEL_PATH[a.col] ? `${LABEL_PATH[a.col]}/${a.id}` : null;
-  const btns = [];
-  if (a.email) {
-    const q = (o) => Object.entries(o).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
-    btns.push(h('a', { class: 'btn btn-primary', href: `mailto:${a.email.to || ''}?${q({ subject: a.email.subject, body: a.email.body })}` }, 'Wyślij'));
-    btns.push(h('a', { class: 'btn btn-soft', href: `https://mail.google.com/mail/?view=cm&fs=1&${q({ to: a.email.to || '', su: a.email.subject, body: a.email.body })}`, target: '_blank', rel: 'noopener' }, 'Gmail'));
-  }
-  if (a.col === 'tasks') {
-    const t = db.get('tasks', a.id);
-    if (t) btns.push(h('button', { class: 'btn btn-soft', onclick: () => editTask(t) }, 'Otwórz'));
-  } else if (path) btns.push(h('button', { class: 'btn btn-soft', onclick: () => navigate(path) }, 'Otwórz'));
-  if (a.href) btns.push(h('a', { class: 'btn btn-soft', href: a.href, target: '_blank', rel: 'noopener' }, 'Otwórz'));
-  if (a.undo) btns.push(h('button', { class: 'btn btn-ghost', onclick: async () => { await a.undo(); toast('Cofnięto'); } }, 'Cofnij'));
-  else if (a.col && a.id && db.get(a.col, a.id) && a.col !== 'docs') {
-    btns.push(h('button', { class: 'btn btn-ghost', onclick: async () => { await db.remove(a.col, a.id); toast('Usunięto'); window.dispatchEvent(new Event('rerender')); } }, 'Cofnij'));
-  }
-  return h('div', { class: 'act' }, icon(a.icon || 'check', 18), h('span', null, a.label), h('span', { class: 'act-btns' }, btns));
-}
-
-export async function sendCommand(text) {
-  if (!text.trim() || busy) return;
-  convo = convo || createConversation();
-  transcript.push({ role: 'user', text });
-  draft = '';
-  busy = 'Myślę…';
-  window.dispatchEvent(new Event('rerender'));
-  try {
-    const r = await convo.send(text, { onStep: (name) => { busy = TOOL_LABELS[name] || 'Pracuję…'; const el = document.querySelector('.thinking span:last-child'); if (el) el.textContent = busy; } });
-    transcript.push({ role: 'ai', text: r.text, actions: r.actions });
-    const nav = r.actions.find((a) => a.navigate);
-    busy = null;
-    if (nav) { navigate(nav.navigate); return; }
-  } catch (e) {
-    transcript.push({ role: 'ai', text: e.message, actions: [] });
-  }
-  busy = null;
-  window.dispatchEvent(new Event('rerender'));
-}
-
-function agentPanel() {
-  const ta = h('textarea', { placeholder: 'Powiedz lub napisz, co zrobić…', 'aria-label': 'Polecenie dla asystenta', rows: 3, id: 'agent-input', enterkeyhint: 'send',
-    oninput: (e) => { draft = e.target.value; },
-    onkeydown: (e) => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(pointer: fine)').matches) { e.preventDefault(); sendCommand(ta.value); } } });
-  ta.value = draft;
-  let stop = null;
-  const mic = ai.canDictate() ? h('button', { class: 'mic', type: 'button', 'aria-label': 'Dyktuj', onclick: () => {
-    if (stop) { stop(); return; }
-    mic.classList.add('rec');
-    const base = ta.value ? `${ta.value} ` : '';
-    stop = ai.dictate({ onText: (t) => { ta.value = base + t; draft = ta.value; }, onEnd: () => { mic.classList.remove('rec'); stop = null; } });
-  } }, icon('mic', 22)) : h('span', { class: 'small muted' }, '🎙 Dyktuj mikrofonem na klawiaturze');
-  const chips = transcript.length ? null : h('div', { class: 'chips' }, SUGGESTIONS.map((t) => h('button', { class: 'chip-btn', onclick: () => sendCommand(t) }, t)));
-  const msgs = transcript.map((m) => (m.role === 'user'
-    ? h('div', { class: 'msg msg-user' }, m.text)
-    : h('div', { class: 'msg msg-ai' }, m.text || 'Gotowe.', m.actions?.length ? h('div', { class: 'actions' }, m.actions.filter((a) => !a.navigate).map(actionView)) : null)));
-  return h('div', { class: 'agent' },
-    ...msgs,
-    busy ? h('div', { class: 'msg msg-ai thinking' }, h('span', { class: 'spinner' }), h('span', null, busy)) : null,
-    h('div', { class: 'agent-box', dataset: { keep: '1' } }, ta,
-      h('div', { class: 'agent-bar' }, mic,
-        transcript.length ? h('button', { class: 'btn btn-ghost btn-sm', onclick: () => { transcript.length = 0; convo = null; window.dispatchEvent(new Event('rerender')); } }, 'Nowa rozmowa') : null,
-        h('button', { class: 'btn btn-primary', disabled: !!busy, onclick: () => sendCommand(ta.value) }, 'Wykonaj'))),
-    chips);
-}
-
+// ---------- Pisma i dokumenty (with the assistant on top) ----------
 export function renderAssistant() {
   const docs = db.all('docs').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const card = (ic, title, text, onclick) => h('button', { class: 'tool-card', onclick },
     h('span', { class: 'tool-ic' }, icon(ic, 24)), h('span', { class: 'tool-title' }, title), h('span', { class: 'tool-text' }, text));
-
   return {
-    title: 'Asystent',
+    title: 'Pisma i dokumenty',
+    back: 'wiecej',
     node: h('div', { class: 'page page-narrow' },
-      ai.available() ? agentPanel() : h('div', { class: 'notice notice-ai' }, icon('ai', 22),
-        h('div', null,
-          h('strong', null, 'Asystent AI'),
-          h('div', { class: 'small' }, 'Po połączeniu z serwerem agencji asystent wykona polecenia głosowe i pisane: doda zadania z przypomnieniami w Kalendarzu Google, przygotuje e-maile, utworzy projekty i kontakty, znajdzie osoby na Instagramie.')),
-        h('button', { class: 'btn btn-soft btn-sm', onclick: () => navigate('ustawienia') }, 'Połącz')),
       h('div', { class: 'tools' },
-        card('doc', 'Napisz pismo', 'Pitch, informacja prasowa, brief, zaproszenie, follow-up, oferta – z AI lub z szablonu.', () => navigate('asystent/pismo')),
-        card('instagram', 'Makieta posta', 'Podgląd posta lub relacji na Instagramie dla klienta – gotowy do wysłania.', () => navigate('asystent/makieta'))),
-      section(`Dokumenty (${docs.length})`, docs.length ? h('div', { class: 'list' }, docs.slice(0, 30).map((d) => h('button', { class: 'list-row', onclick: () => navigate(`dokument/${d.id}`) },
+        card('doc', 'Nowe pismo', 'Pitch, informacja prasowa, brief, zaproszenie, follow-up, oferta – AI pisze za Ciebie.', () => navigate('asystent/pismo')),
+        card('instagram', 'Makieta posta', 'Podgląd posta lub relacji na Instagramie dla klienta.', () => navigate('asystent/makieta'))),
+      // without the server the panel can only add tasks – that belongs to the ✦ button, not to this page
+      ai.available() ? section('Albo powiedz asystentowi', assistantPanel().el) : null,
+      section(`Zapisane dokumenty (${docs.length})`, docs.length ? h('div', { class: 'list' }, docs.slice(0, 50).map((d) => h('button', { class: 'list-row', onclick: () => navigate(`dokument/${d.id}`) },
         h('span', { class: 'row-ic' }, icon(d.kind === 'contract' ? 'file' : d.kind === 'email' ? 'mail' : 'doc', 20)),
         h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, d.title),
-          h('div', { class: 'row-meta' }, [db.get('contacts', d.contactId)?.name, relDay(d.updatedAt.slice(0, 10))].filter(Boolean).join(' · '))),
+          h('div', { class: 'row-meta' }, [d.kind === 'contract' ? 'Umowa' : null, db.get('contacts', d.contactId)?.name, relDay(d.updatedAt.slice(0, 10))].filter(Boolean).join(' · '))),
         icon('chevron', 18, 'muted'))))
-        : h('p', { class: 'muted pad' }, 'Brak zapisanych dokumentów.'))),
+        : h('p', { class: 'muted pad' }, 'Brak zapisanych dokumentów. Poproś asystenta albo stuknij „Nowe pismo”.'))),
   };
 }
 
@@ -126,35 +45,42 @@ export function renderLetter(query) {
   else if (proj) tplDefault = 'status';
 
   const contactsAll = db.all('contacts').sort((a, b) => a.name.localeCompare(b.name, 'pl'));
-  const fields = [
+  // the essentials; everything else is optional and folded away
+  const mainForm = buildForm([
     { key: 'tpl', label: 'Rodzaj pisma', type: 'select', full: true, options: TEMPLATES.map((t) => [t.id, t.label]) },
-    { key: 'contactId', label: 'Odbiorca', type: 'select', options: [['', '— wybierz —'], ...contactsAll.map((c) => [c.id, `${c.name} (${M.kindLabel(c.kind).toLowerCase()})`])] },
-    { key: 'clientId', label: 'Marka / klient', type: 'select', options: [['', '— wybierz —'], ...contactsAll.filter((c) => c.kind === 'klient').map((c) => [c.id, c.name])] },
-    { key: 'projectId', label: 'Projekt', type: 'select', options: [['', '— brak —'], ...db.all('projects').map((p) => [p.id, p.title])] },
+    { key: 'contactId', label: 'Do kogo', type: 'select', full: true, options: [['', '— wybierz —'], ...contactsAll.map((c) => [c.id, `${c.name} (${M.kindLabel(c.kind).toLowerCase()})`])] },
+    { key: 'projectId', label: 'Projekt', type: 'select', full: true, options: [['', '— brak —'], ...db.all('projects').map((p) => [p.id, p.title])] },
+    { key: 'details', label: 'Co chcesz przekazać? (opcjonalnie)', type: 'textarea', rows: 3, placeholder: 'np. zaproś na premierę 12.10, podkreśl naturalne składniki. AI resztę weźmie z projektu.' },
+  ], { tpl: tplDefault, contactId: contactPre, projectId: projectPre });
+  const moreForm = buildForm([
+    { key: 'clientId', label: 'Marka / klient', type: 'select', options: [['', '— z projektu —'], ...contactsAll.filter((c) => c.kind === 'klient').map((c) => [c.id, c.name])] },
     { key: 'tone', label: 'Ton', type: 'select', options: [['formalny', 'Formalny'], ['swobodny', 'Swobodny']] },
     { key: 'topic', label: 'Temat / nazwa', full: true, placeholder: 'np. Premiera kolekcji jesiennej' },
     { key: 'date', label: 'Data', type: 'date' },
     { key: 'place', label: 'Miejsce', placeholder: 'np. Warszawa, Hala Koszyki' },
-    { key: 'details', label: 'Szczegóły / kluczowe informacje', type: 'textarea', rows: 4, placeholder: 'Każda linia może być osobnym punktem.' },
-  ];
-  const form = buildForm(fields, {
-    tpl: tplDefault, contactId: contactPre, projectId: projectPre,
-    clientId: pre?.kind === 'klient' ? pre.id : proj?.clientId || '', tone: 'formalny',
-  });
+  ], { clientId: pre?.kind === 'klient' ? pre.id : proj?.clientId || '', tone: 'formalny' });
+  const form = {
+    inputs: { ...mainForm.inputs, ...moreForm.inputs },
+    read: () => ({ ...moreForm.read(), ...mainForm.read() }),
+  };
+  const moreFields = h('details', { class: 'more-fields' }, h('summary', null, 'Więcej szczegółów (opcjonalnie)'), moreForm.el);
   const subject = h('input', { type: 'text', class: 'out-subject', 'aria-label': 'Temat wiadomości' });
   const body = h('textarea', { class: 'out-body', rows: 18, 'aria-label': 'Treść pisma' });
   let edited = false;
   const regenBtn = h('button', { class: 'btn btn-soft btn-sm', hidden: true, onclick: () => { edited = false; regen(); } }, icon('sync', 16), 'Z szablonu');
-  const aiBtn = h('button', { class: 'btn btn-primary btn-sm', onclick: async () => {
-    if (!ai.available()) { toast('AI działa po połączeniu z serwerem agencji (Ustawienia).'); return; }
-    aiBtn.disabled = true; aiBtn.textContent = 'AI pisze…';
+  const aiLabel = [icon('ai', 18), 'Napisz z AI'];
+  const aiBtn = h('button', { class: 'btn btn-primary btn-block', onclick: async () => {
+    if (!ai.available()) { toast('AI działa po połączeniu z serwerem agencji (Więcej → Ustawienia). Poniżej jest tekst z szablonu.'); return; }
+    if (!form.read().contactId && !form.read().projectId) { toast('Wybierz odbiorcę lub projekt – AI weźmie z nich resztę.'); return; }
+    aiBtn.disabled = true; clear(aiBtn).append(h('span', { class: 'spinner' }), 'AI pisze…');
     try {
       const r = await aiLetter(form.read());
       subject.value = r.subject; body.value = r.body; edited = true; regenBtn.hidden = false;
-      toast('Gotowe – przeczytaj i dopracuj przed wysłaniem');
+      toast('Gotowe – przeczytaj i wyślij');
+      body.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) { toast(e.message); }
-    aiBtn.disabled = false; aiBtn.textContent = 'Napisz z AI';
-  } }, 'Napisz z AI');
+    aiBtn.disabled = false; clear(aiBtn).append(...aiLabel);
+  } }, ...aiLabel);
   body.addEventListener('input', () => { edited = true; regenBtn.hidden = false; });
   subject.addEventListener('input', () => { edited = true; regenBtn.hidden = false; });
 
@@ -200,14 +126,14 @@ export function renderLetter(query) {
     } }, 'Zapisz'));
 
   return {
-    title: 'Napisz pismo',
+    title: 'Nowe pismo',
     back: 'asystent',
     node: h('div', { class: 'page' },
       h('div', { class: 'two-col letter-layout' },
-        h('div', { class: 'col' }, h('div', { class: 'card pad-card' }, form.el, hintEl)),
+        h('div', { class: 'col' }, h('div', { class: 'card pad-card letter-form' }, mainForm.el, hintEl, moreFields, aiBtn)),
         h('div', { class: 'col' },
           h('div', { class: 'card pad-card letter-out' },
-            h('div', { class: 'section-head' }, h('h3', null, 'Gotowy tekst'), h('div', { class: 'row-gap' }, regenBtn, aiBtn)),
+            h('div', { class: 'section-head' }, h('h3', null, 'Gotowy tekst'), regenBtn),
             h('label', { class: 'field field-full' }, h('span', { class: 'field-label' }, 'Temat'), subject),
             h('label', { class: 'field field-full' }, h('span', { class: 'field-label' }, 'Treść (możesz edytować)'), body),
             h('p', { class: 'hint-line' }, 'Fragmenty w [nawiasach] uzupełnij przed wysłaniem.')),
@@ -276,7 +202,11 @@ export function renderDoc(id) {
 const FORMATS = { square: [1080, 1080, 'Post 1:1'], portrait: [1080, 1350, 'Post 4:5'], story: [1080, 1920, 'Relacja 9:16'] };
 
 export function renderMockup(query) {
-  const state = { imageBlob: null, imageId: query.get('plik') || '', format: 'portrait' };
+  // opened from a project: use its client account and its newest photo
+  const proj = db.get('projects', query.get('projekt'));
+  const projClient = proj && db.get('contacts', proj.clientId);
+  const projImage = proj && db.all('files').filter((f) => f.isImage && f.projectId === proj.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const state = { imageBlob: null, imageId: query.get('plik') || projImage?.id || '', format: FORMATS[query.get('format')] ? query.get('format') : 'portrait' };
   const clients = db.all('contacts').filter((c) => c.kind === 'klient' || c.kind === 'influencer').sort((a, b) => a.name.localeCompare(b.name, 'pl'));
   const form = buildForm([
     { key: 'contactId', label: 'Konto (klient / influencer)', type: 'select', options: [['', 'momentyagency'], ...clients.map((c) => [c.id, c.name])] },
@@ -284,7 +214,26 @@ export function renderMockup(query) {
     { key: 'location', label: 'Lokalizacja', placeholder: 'np. Warszawa, Polska' },
     { key: 'likes', label: 'Polubienia', type: 'number', inputmode: 'numeric', default: 1248 },
     { key: 'caption', label: 'Opis posta', type: 'textarea', rows: 5, placeholder: 'Treść opisu, #hashtagi' },
-  ], {});
+  ], {
+    contactId: projClient?.id || '',
+    handle: projClient ? (projClient.instagram ? M.handle(projClient.instagram).slice(1) : projClient.name.toLowerCase().replace(/[^a-z0-9._]/g, '')) : '',
+    caption: query.get('caption') || '',
+  });
+  const captionAI = h('button', { class: 'btn btn-soft btn-sm', type: 'button', onclick: async () => {
+    if (!ai.available()) { toast('AI działa po połączeniu z serwerem agencji.'); return; }
+    captionAI.disabled = true;
+    try {
+      const c = db.get('contacts', form.inputs.contactId.value);
+      const res = await ai.ask({
+        system: 'Jesteś copywriterką social media w agencji PR Momenty Agency. Piszesz po polsku angażujące opisy postów na Instagram: mocne pierwsze zdanie, 2–4 krótkie akapity lub zdania, wezwanie do działania, 5–10 trafnych hashtagów. Bez cudzysłowów i komentarzy – zwracasz tylko gotowy opis.',
+        messages: [{ role: 'user', content: `Marka: ${c?.name || 'Momenty Agency'}${c?.messages ? `\nPrzekazy marki: ${c.messages}` : ''}${proj ? `\nProjekt: ${proj.title}\nOpis: ${proj.description || ''}\nCel: ${proj.goal || ''}` : ''}\nFormat: ${FORMATS[state.format][2]}\nObecny opis (popraw lub napisz nowy): ${form.inputs.caption.value || '—'}` }],
+        max_tokens: 1500, effort: 'low',
+      });
+      form.inputs.caption.value = ai.textOf(res);
+      draw();
+    } catch (e) { toast(e.message); }
+    captionAI.disabled = false;
+  } }, icon('ai', 16), 'Napisz opis z AI');
   form.inputs.contactId.addEventListener('change', () => {
     const c = db.get('contacts', form.inputs.contactId.value);
     form.inputs.handle.value = c?.instagram ? M.handle(c.instagram).slice(1) : (c ? c.name.toLowerCase().replace(/[^a-z0-9._]/g, '') : '');
@@ -352,14 +301,14 @@ export function renderMockup(query) {
 
   return {
     title: 'Makieta posta',
-    back: 'asystent',
+    back: proj ? `projekt/${proj.id}?tab=pliki` : 'wiecej',
     node: h('div', { class: 'page' },
       h('div', { class: 'two-col mock-layout' },
         h('div', { class: 'col' },
           h('div', { class: 'card pad-card' },
             h('div', { class: 'field-label' }, 'Zdjęcie'), thumbs,
             h('div', { class: 'field-label', style: { marginTop: '14px' } }, 'Format'), fmtSeg,
-            form.el)),
+            form.el, captionAI)),
         h('div', { class: 'col' },
           h('div', { class: 'mock-wrap' }, canvas),
           h('div', { class: 'sheet-actions sticky-actions' },
@@ -367,7 +316,7 @@ export function renderMockup(query) {
             h('button', { class: 'btn btn-primary', onclick: async () => {
               const b = await exportBlob();
               const c = db.get('contacts', form.inputs.contactId.value);
-              const rec = await saveFile(new File([b], fileName(), { type: 'image/png' }), { clientId: c?.id || '', caption: `Makieta: ${form.read().handle || 'post'}` });
+              const rec = await saveFile(new File([b], fileName(), { type: 'image/png' }), { clientId: c?.id || '', projectId: proj?.id || '', caption: `Makieta: ${form.read().handle || 'post'}` });
               db.logActivity(`przygotował(a) makietę posta${c ? ` dla ${c.name}` : ''}`, { col: 'files', id: rec.id });
               toast('Makieta zapisana w Plikach');
             } }, 'Zapisz w plikach'))))),

@@ -12,9 +12,12 @@ instructions, Google Calendar reminders, Canva and Instagram helpers. Interface 
 
 ## Features
 - **Dziś** – overdue, today, next 7 days, projects in progress, clients needing attention, activity of both partners.
-- **Quick add (+)** – "Zadzwonić do Magazynu Styl jutro o 15" → task with date and time. "Z AI" hands it to the assistant.
-- **Projects** – clean page with tabs: *Przegląd* (stage, next tasks, details) · *Zadania* · *Wycena* (line items, VAT,
-  discount, AI price proposal you can edit, PDF offer) · *Pliki* (photos, files, Canva) · *Dokumenty* (letters, contracts).
+- **Simple navigation** – 4 tabs (*Dziś · Projekty · Kontakty · Więcej*) and the **✦ Asystent** button on every screen:
+  type or dictate anything, or add a task / project / contact / photo / letter / mock-up. Short welcome tour on first start.
+- **Projects** – 3 tabs: *Przegląd* (stage, tasks, brief, influencers) · *Wycena i umowa* (line items, VAT, discount,
+  AI price proposal you can edit, PDF offer, contract) · *Pliki i dokumenty* (photos, files, Canva, letters).
+  One-tap AI buttons on top: e-mail to the client with the project status, price proposal, contract, Instagram mock-up,
+  plan next steps, press release – the AI already knows the project, client and pricing.
 - **Contacts** – clients (incl. legal data for contracts), influencers (followers, engagement, rates, rating), media,
   partners. One-tap call / SMS / e-mail / Instagram / TikTok; Instagram lookup.
 - **AI assistant** – type or dictate: it creates tasks with reminders, drafts e-mails (send via Mail or Gmail),

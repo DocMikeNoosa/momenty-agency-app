@@ -7,6 +7,9 @@ import * as ai from './ai.js';
 import * as cloud from './cloud.js';
 import { todayStr, addDays, longDay } from './ui.js';
 import { instagramLookup } from './instagram.js';
+import { pricingOf, totals } from './pricing.js';
+import { aiContract, templateContract } from './contracts.js';
+import { agencyProfile } from './agency.js';
 
 const TOOLS = [
   {
@@ -56,7 +59,7 @@ const TOOLS = [
   },
   {
     name: 'draft_email',
-    description: 'Przygotowuje gotowy do wysłania e-mail (zapisuje go w Dokumentach). Nie wysyła go – użytkownik wyśle go jednym stuknięciem. Pisz profesjonalnie, po polsku, w imieniu Momenty Agency.',
+    description: 'Przygotowuje kompletny, gotowy do wysłania e-mail lub pismo (zapisuje w Dokumentach; użytkownik wyśle je jednym stuknięciem). Pisz całość sam(a) na podstawie kontekstu projektu i kontaktu – profesjonalnie, po polsku, w imieniu Momenty Agency, z podpisem bieżącego użytkownika. Każda firma ma dostać oryginalnie sformułowany tekst (nie powtarzaj otwarć z listy „otwarcia_innych_listow”). Placeholdery [uzupełnij: …] tylko gdy brakuje faktów.',
     input_schema: {
       type: 'object',
       properties: {
@@ -106,6 +109,37 @@ const TOOLS = [
     },
   },
   {
+    name: 'propose_pricing',
+    description: 'Otwiera zakładkę „Wycena i umowa” projektu i uruchamia propozycję wyceny AI (użytkownik ją sprawdzi i zatwierdzi). Używaj, gdy prosi o wycenę, cenę, budżet lub ofertę cenową.',
+    input_schema: { type: 'object', properties: { project_id: { type: 'string' } }, required: ['project_id'] },
+  },
+  {
+    name: 'create_contract',
+    description: 'Przygotowuje projekt umowy dla projektu na podstawie danych projektu, wyceny, klienta i agencji; zapisuje go w Dokumentach.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        type: { type: 'string', enum: ['uslugi', 'dzielo', 'ramowa'] },
+        rights: { type: 'string', enum: ['przeniesienie', 'licencja', 'brak'] },
+        extra: { type: 'string', description: 'Dodatkowe ustalenia podane przez użytkownika' },
+      },
+      required: ['project_id'],
+    },
+  },
+  {
+    name: 'prepare_mockup',
+    description: 'Otwiera kreator makiety posta / relacji na Instagramie z gotowym opisem (napisz opis posta po polsku z hashtagami, pasujący do projektu i marki).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' }, caption: { type: 'string' },
+        format: { type: 'string', enum: ['square', 'portrait', 'story'] },
+      },
+      required: ['caption'],
+    },
+  },
+  {
     name: 'instagram_lookup',
     description: 'Przygotowuje link do profilu na Instagramie (gdy znana nazwa konta) lub link do wyszukania osoby/marki na Instagramie.',
     input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
@@ -135,6 +169,8 @@ Zasady:
 - E-maile tylko przygotowujesz (draft_email) – nigdy nie twierdź, że zostały wysłane. Pisz jak doświadczona agencja PR: profesjonalnie, ciepło, konkretnie, bez sztampy.
 - Nie wymyślaj adresów e-mail, telefonów ani faktów o osobach. Jeśli czegoś nie wiesz, zapytaj.
 - Jeśli polecenie jest niejasne lub ryzykowne, dopytaj zamiast zgadywać.
+- Jeśli w kontekście jest „biezacy_ekran” (projekt lub kontakt), polecenia typu „napisz maila”, „wycena”, „umowa”, „makieta” dotyczą właśnie jego – nie dopytuj, działaj.
+- Pisma i e-maile piszesz od razu w całości, korzystając z briefu, przekazów marki, wyceny, zadań i historii – użytkownik ma tylko przeczytać i wysłać.
 - Na koniec napisz jednym–dwoma zdaniami, co zrobiłeś(-aś).`;
 
 function context() {
@@ -150,6 +186,41 @@ function context() {
     projekty: db.all('projects').filter((p) => p.stage !== 'zakonczony').slice(0, 60).map((p) => ({ id: p.id, tytul: p.title, klient: db.get('contacts', p.clientId)?.name || null, etap: M.stageLabel(p.stage), termin: p.due || null })),
     zadania: tasks.map((t) => ({ id: t.id, tytul: t.title, data: t.due || null, godz: t.time || null, osoba: t.owner, rodzaj: t.kind })),
   };
+}
+
+function focusContext(focus) {
+  if (!focus) return null;
+  const opening = (d) => (d.body || '').split('\n').filter((l) => l.trim()).slice(1, 3).join(' ').slice(0, 200);
+  if (focus.kind === 'project') {
+    const p = db.get('projects', focus.id);
+    if (!p) return null;
+    const c = db.get('contacts', p.clientId);
+    const pr = pricingOf(p);
+    const t = totals(pr);
+    return {
+      rodzaj: 'projekt', id: p.id, tytul: p.title, etap: M.stageLabel(p.stage), typ: M.PROJECT_TYPES.find((x) => x[0] === p.type)?.[1],
+      opis_i_brief: p.description || null, cel: p.goal || null, start: p.start || null, termin: p.due || null, budzet: p.budget || null,
+      klient: c ? { id: c.id, nazwa: c.name, osoba: c.person || null, email: c.email || null, branza: c.industry || null, instagram: c.instagram || null, przekazy_marki: c.messages || null } : null,
+      wycena: pr.items.length ? { pozycje: pr.items.map((i) => `${i.name}: ${i.qty} ${i.unit} × ${i.price} zł`), netto: Math.round(t.net), brutto: Math.round(t.gross) } : null,
+      zadania: db.all('tasks').filter((x) => x.projectId === p.id).sort(M.sortTasks).slice(0, 30).map((x) => ({ id: x.id, tytul: x.title, data: x.due || null, zrobione: !!x.done })),
+      influencerzy: (p.influencerIds || []).map((i) => db.get('contacts', i)).filter(Boolean).map((x) => ({ id: x.id, nazwa: x.name, instagram: x.instagram || null, obserwujacy: x.followers || null, stawki: x.rates || null, email: x.email || null })),
+      dokumenty: db.all('docs').filter((d) => d.projectId === p.id).slice(0, 10).map((d) => d.title),
+      otwarcia_innych_listow: db.all('docs').filter((d) => d.contactId && d.contactId !== p.clientId).slice(-6).map(opening),
+    };
+  }
+  if (focus.kind === 'contact') {
+    const c = db.get('contacts', focus.id);
+    if (!c) return null;
+    const { id, kind, name, email, phone, instagram, outlet, role, beat, niche, followers, rates, industry, person, messages, notes, preferences } = c;
+    return {
+      rodzaj: 'kontakt', id, typ: M.kindLabel(kind), nazwa: name, email, telefon: phone, instagram, redakcja: outlet, stanowisko: role,
+      tematyka: beat || niche, obserwujacy: followers, stawki: rates, branza: industry, osoba: person, przekazy_marki: messages, notatki: notes, preferencje: preferences,
+      projekty: db.all('projects').filter((p) => p.clientId === c.id || (p.influencerIds || []).includes(c.id)).map((p) => ({ id: p.id, tytul: p.title, etap: M.stageLabel(p.stage) })),
+      ostatnie_pisma: db.all('docs').filter((d) => d.contactId === c.id).slice(-5).map((d) => d.title),
+      otwarcia_innych_listow: db.all('docs').filter((d) => d.contactId && d.contactId !== c.id).slice(-6).map(opening),
+    };
+  }
+  return null;
 }
 
 const ok = (o) => JSON.stringify({ ok: true, ...o });
@@ -252,6 +323,26 @@ async function run(name, input) {
       db.logActivity(`dodał(a) kontakt (AI): ${c.name}`, { col: 'contacts', id: c.id });
       return [ok({ contact_id: c.id }), { icon: M.kindIcon(c.kind), label: `Kontakt: ${c.name}`, col: 'contacts', id: c.id }];
     }
+    case 'propose_pricing': {
+      const p = db.get('projects', input.project_id);
+      if (!p) return [fail('Nie znaleziono projektu')];
+      return [ok({ info: 'Propozycja wyceny jest przygotowywana na ekranie projektu.' }), { navigate: `projekt/${p.id}?tab=pieniadze&ai=1` }];
+    }
+    case 'create_contract': {
+      const p = db.get('projects', input.project_id);
+      if (!p) return [fail('Nie znaleziono projektu')];
+      const opts = { type: input.type || 'uslugi', rights: input.rights || 'przeniesienie', payDays: agencyProfile().paymentDays || 14, confidential: 'tak', penalties: 'nie', place: 'Warszawa', extra: input.extra || '' };
+      let body;
+      try { body = await aiContract(p, opts); } catch { body = templateContract(p, opts); }
+      const d = await db.put('docs', { title: `Umowa – ${p.title}`, body, kind: 'contract', projectId: p.id, contactId: p.clientId || '' });
+      db.logActivity(`przygotował(a) umowę (AI): ${p.title}`, { col: 'docs', id: d.id });
+      return [ok({ doc_id: d.id }), { icon: 'file', label: `Umowa: ${p.title} (projekt do sprawdzenia)`, col: 'docs', id: d.id }];
+    }
+    case 'prepare_mockup': {
+      const q = new URLSearchParams({ caption: input.caption || '', format: input.format || 'portrait' });
+      if (db.get('projects', input.project_id)) q.set('projekt', input.project_id);
+      return [ok({}), { navigate: `asystent/makieta?${q}` }];
+    }
     case 'instagram_lookup': {
       const r = instagramLookup(input.query);
       return [ok(r), { icon: 'instagram', label: r.handle ? `Instagram: ${r.handle}` : `Szukaj na Instagramie: ${input.query}`, href: r.profileUrl || r.searchUrl }];
@@ -272,12 +363,13 @@ export const LABEL_PATH = { tasks: null, projects: 'projekt', contacts: 'kontakt
  * Conversation with the assistant. Keeps history so follow-up questions work.
  * send(text) → { text, actions[] }
  */
-export function createConversation() {
+export function createConversation({ focus = null } = {}) {
   const messages = [];
   let first = true;
   async function send(text, { onStep } = {}) {
+    const ctx = { ...context(), biezacy_ekran: focusContext(focus) };
     const content = first
-      ? `Kontekst aplikacji (JSON):\n${JSON.stringify(context())}\n\nPolecenie użytkownika:\n${text}`
+      ? `Kontekst aplikacji (JSON):\n${JSON.stringify(ctx)}\n\nPolecenie użytkownika:\n${text}`
       : text;
     first = false;
     messages.push({ role: 'user', content });
@@ -308,4 +400,5 @@ export const TOOL_LABELS = {
   create_task: 'Dodaję zadanie…', update_task: 'Zmieniam zadanie…', list_tasks: 'Sprawdzam zadania…', search: 'Szukam…',
   draft_email: 'Piszę e-mail…', create_project: 'Tworzę projekt…', update_project: 'Aktualizuję projekt…',
   create_contact: 'Dodaję kontakt…', instagram_lookup: 'Szukam na Instagramie…', open_screen: 'Otwieram…',
+  propose_pricing: 'Przygotowuję wycenę…', create_contract: 'Piszę umowę…', prepare_mockup: 'Przygotowuję makietę…',
 };

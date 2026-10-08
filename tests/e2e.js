@@ -78,11 +78,22 @@ await page.waitForSelector('text=Gotowe');
 ok(true, 'klucz dostępu zarejestrowany');
 await page.locator('button:has-text("Pokaż z przykładowymi danymi")').click();
 
+step('Powitanie (3 wskazówki)');
+await page.waitForSelector('.tour');
+await page.screenshot({ path: `${shots}/02b-powitanie.png` });
+await page.locator('.sheet button:has-text("Dalej")').click();
+ok((await page.locator('.tour-title').textContent()).includes('Przycisk ✦'), 'wskazówka o przycisku ✦');
+await page.locator('.sheet button:has-text("Dalej")').click();
+await page.locator('.sheet button:has-text("Zaczynamy")').click();
+await page.waitForTimeout(400);
+ok(await page.locator('.tour').count() === 0, 'powitanie zamknięte');
+
 step('Ekran Dziś');
 await page.waitForSelector('.hero');
 ok((await page.locator('.hero-title').textContent()).includes('Kasia'), 'powitanie z imieniem');
 ok(await page.locator('.tabbar').isVisible(), 'dolny pasek zakładek widoczny');
-ok(await page.locator('.fab').isVisible(), 'przycisk + widoczny');
+ok(await page.locator('.tab-ai').isVisible(), 'przycisk ✦ Asystent widoczny');
+ok(await page.locator('.tabbar .nav-item').count() === 4, '4 zakładki + ✦');
 ok(!(await page.locator('.sidebar').isVisible()), 'pasek boczny ukryty na telefonie');
 const todayCount = await page.locator('.task').count();
 ok(todayCount >= 4, `zadania na ekranie (${todayCount})`);
@@ -92,14 +103,17 @@ const overflow = await page.evaluate(() => document.documentElement.scrollWidth 
 ok(overflow <= 0, `brak poziomego przewijania (${overflow}px)`);
 
 step('Szybkie dodawanie');
-await page.locator('.fab').click();
-await page.waitForSelector('.qa-input');
-await page.locator('.qa-input').fill('Zadzwonić do Magazynu Styl jutro o 15');
+await page.locator('.tab-ai').click();
+await page.waitForSelector('#agent-input');
+ok(await page.locator('.sheet .shortcut').count() === 6, 'skróty: zadanie, projekt, kontakt, zdjęcie, pismo, makieta');
+await page.locator('#agent-input').fill('Zadzwonić do Magazynu Styl jutro o 15');
 ok((await page.locator('.qa-preview').textContent()).includes('Jutro · 15:00'), 'rozpoznano „jutro o 15”');
 await page.screenshot({ path: `${shots}/04-szybkie-dodawanie.png` });
-await page.locator('button:has-text("Dodaj zadanie")').click();
+await page.locator('.sheet button:has-text("Dodaj zadanie")').click();
 await page.waitForTimeout(400);
 ok((await toastText(page)).includes('jutro 15:00'), 'potwierdzenie dodania');
+await page.keyboard.press('Escape');
+await page.waitForTimeout(400);
 ok(await page.locator('.task:has-text("Zadzwonić do Magazynu Styl")').count() === 1, 'zadanie widoczne w „Najbliższe 7 dni”');
 
 step('Odhaczanie i przesuwanie (swipe)');
@@ -139,7 +153,13 @@ await page.waitForSelector('.stepper');
 await page.locator('.step:has-text("Raport")').click();
 await page.waitForTimeout(300);
 ok((await page.locator('.step.now').textContent()).includes('Raport'), 'zmiana etapu projektu');
-await page.locator('.tab:has-text("Zadania")').click();
+ok(await page.locator('.tabs .tab').count() === 3, 'projekt ma 3 zakładki');
+ok(await page.locator('.ai-strip .ai-chip').count() === 6, 'przyciski asystenta dla projektu');
+await page.locator('.tab-ai').click();
+await page.waitForSelector('.focus-chip');
+ok((await page.locator('.focus-chip').textContent()).includes('Premiera serum'), 'asystent wie, który projekt jest otwarty');
+await page.keyboard.press('Escape');
+await page.waitForTimeout(400);
 await page.locator('button:has-text("Nowe zadanie")').click();
 await page.waitForSelector('.sheet input');
 await page.locator('.sheet .field:has-text("Zadanie") input').fill('Zebrać statystyki publikacji');
@@ -173,7 +193,9 @@ await page.waitForSelector('.detail-title:has-text("Tomasz Wójcik")');
 ok(true, 'dodano dziennikarza');
 
 step('Pliki (zdjęcie)');
-await page.locator('.tabbar .nav-item[data-tab=pliki]').click();
+await page.locator('.tabbar .nav-item[data-tab=wiecej]').click();
+await page.waitForSelector('.more-tile');
+await page.locator('.more-tile:has-text("Pliki i zdjęcia")').click();
 await page.waitForSelector('.upload-bar');
 const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('.upload-btn:has-text("Dodaj pliki")').click()]);
 await chooser.setFiles(path.join(root, 'assets/icons/icon-512.png'));
@@ -188,14 +210,16 @@ ok((await page.locator('.tile-cap').first().textContent()) === 'Logo do makiety'
 await page.screenshot({ path: `${shots}/09-pliki.png` });
 
 step('Asystent – pismo');
-await page.locator('.tabbar .nav-item[data-tab=asystent]').click();
-await page.locator('.tool-card:has-text("Napisz pismo")').click();
+await page.locator('.tabbar .nav-item[data-tab=wiecej]').click();
+await page.locator('.more-tile:has-text("Pisma i dokumenty")').click();
+await page.locator('.tool-card:has-text("Nowe pismo")').click();
 await page.waitForSelector('.out-body');
 await page.locator('.field:has-text("Rodzaj pisma") select').selectOption('brief');
-await page.locator('.field:has-text("Odbiorca") select').selectOption({ label: 'Ola Kamińska (influencer)' });
+await page.locator('.field:has-text("Do kogo") select').selectOption({ label: 'Ola Kamińska (influencer)' });
+await page.locator('.more-fields summary').click();
 await page.locator('.field:has-text("Marka / klient") select').selectOption({ label: 'Atelier Lumière' });
-await page.locator('.field:has-text("Temat") input').first().fill('Premiera serum jesiennego');
-await page.locator('.field:has-text("Szczegóły") textarea').fill('1 post w feedzie\n3 relacje');
+await page.locator('.field:has-text("Temat / nazwa") input').fill('Premiera serum jesiennego');
+await page.locator('.field:has-text("Co chcesz przekazać") textarea').fill('1 post w feedzie\n3 relacje');
 const body = await page.locator('.out-body').inputValue();
 ok(body.includes('Atelier Lumière') && body.includes('• 1 post w feedzie') && body.includes('Naturalne składniki'), 'brief z danymi klienta i przekazami');
 ok(body.includes('Kasia'), 'podpis nadawcy');
@@ -223,6 +247,9 @@ ok((await toastText(page)).includes('Makieta zapisana'), 'makieta zapisana w pli
 
 step('Ustawienia – kopia i kalendarz');
 await page.goto(`${URL_}#/ustawienia`);
+await page.waitForSelector('.set-row-big');
+ok(await page.locator('.set-row-big').count() === 6, 'ustawienia podzielone na 6 czytelnych działów');
+await page.locator('.set-row-big:has-text("Kopia i dane")').click();
 await page.waitForSelector('.set-group');
 const [dl1] = await Promise.all([page.waitForEvent('download'), page.locator('.set-row:has-text("Pobierz pełną kopię")').click()]);
 const backupPath = path.join(shots, 'kopia.json');
@@ -237,6 +264,7 @@ ok(ics.includes('BEGIN:VEVENT') && ics.includes('BEGIN:VALARM'), `plik kalendarz
 await page.screenshot({ path: `${shots}/12-ustawienia.png`, fullPage: true });
 
 step('Blokada i odblokowanie');
+await page.goto(`${URL_}#/ustawienia/bezpieczenstwo`);
 await page.locator('.set-row:has-text("Zablokuj teraz")').click();
 await page.waitForSelector('.lock-input');
 ok(await page.locator('.task').count() === 0, 'dane ukryte po zablokowaniu');
@@ -287,11 +315,13 @@ await di.nth(0).fill('Ola'); await di.nth(1).fill('Kasia'); await di.nth(2).fill
 await dp.locator('.brand-form button[type=submit]').click();
 await dp.waitForSelector('text=Pokaż z przykładowymi danymi');
 await dp.locator('button:has-text("Pokaż z przykładowymi danymi")').click();
+await dp.waitForSelector('.tour');
+await dp.locator('.sheet [aria-label=Zamknij]').first().click();
 await dp.waitForSelector('.hero');
 ok(await dp.locator('.sidebar').isVisible(), 'pasek boczny widoczny');
 ok(!(await dp.locator('.tabbar').isVisible()), 'dolny pasek ukryty');
 await dp.waitForTimeout(400); await dp.screenshot({ path: `${shots}/20-dzis-komputer.png` });
-await dp.locator('.sidebar .nav-item[data-tab=projekty]').click();
+await dp.locator('.sidebar .nav-item[data-side=projekty]').click();
 await dp.waitForSelector('.kanban');
 ok(await dp.locator('.kcol').count() === 5, 'tablica kanban z 5 etapami');
 const card = dp.locator('.kcol[data-stage=przygotowanie] .pcard-full').first();

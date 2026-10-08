@@ -12,7 +12,9 @@ import { renderToday } from './views/today.js';
 import { renderProjects, renderProject, canvaReturned } from './views/projects.js';
 import { renderContacts, renderContact } from './views/contacts.js';
 import { renderFiles } from './views/files.js';
-import { renderAssistant, renderLetter, renderDoc, renderMockup, sendCommand } from './views/assistant.js';
+import { renderAssistant, renderLetter, renderDoc, renderMockup } from './views/assistant.js';
+import { openAssist } from './assist.js';
+import { renderMore, maybeTour } from './views/more.js';
 import * as ai from './ai.js';
 import { renderSettings, loadDemo, deviceLabel } from './views/settings.js';
 import * as cloud from './cloud.js';
@@ -25,10 +27,9 @@ const TABS = [
   ['dzis', 'Dziś', 'today'],
   ['projekty', 'Projekty', 'projects'],
   ['kontakty', 'Kontakty', 'contacts'],
-  ['pliki', 'Pliki', 'files'],
-  ['asystent', 'Asystent', 'ai'],
+  ['wiecej', 'Więcej', 'grid'],
 ];
-const TAB_OF = { projekt: 'projekty', kontakt: 'kontakty', dokument: 'asystent', ustawienia: '' };
+const TAB_OF = { projekt: 'projekty', kontakt: 'kontakty', dokument: 'wiecej', asystent: 'wiecej', pliki: 'wiecej', ustawienia: 'wiecej' };
 
 // ---------- Boot ----------
 async function boot() {
@@ -179,6 +180,7 @@ async function enter() {
   if (!location.hash || location.hash === '#' || location.hash === '#/') navigate('dzis', { replace: true });
   render();
   cloud.startAuto();
+  maybeTour();
 }
 
 // auto-lock
@@ -205,14 +207,17 @@ function buildShell() {
   clear(app);
   const navItem = (key, label, ic) => h('a', { class: 'nav-item', href: `#/${key}`, dataset: { tab: key },
     onclick: (e) => { e.preventDefault(); navigate(key, { replace: true }); } }, icon(ic, 22), h('span', null, label));
+  const sideLink = (key, label, ic) => h('a', { class: 'nav-item', href: `#/${key}`, dataset: { side: key } }, icon(ic, 22), h('span', null, label));
 
   const sidebar = h('nav', { class: 'sidebar', 'aria-label': 'Nawigacja' },
     h('div', { class: 'side-brand' }, h('img', { src: 'assets/icons/logo-white.png', alt: 'momenty agency' })),
-    h('button', { class: 'btn btn-cream side-add', onclick: quickAdd }, icon('plus', 18), 'Dodaj'),
-    h('div', { class: 'side-nav' }, TABS.map(([k, l, i]) => navItem(k, l, i))),
+    h('button', { class: 'btn btn-primary side-add', onclick: () => openAssist() }, icon('ai', 19), 'Asystent i dodawanie'),
+    h('div', { class: 'side-nav' },
+      sideLink('dzis', 'Dziś', 'today'), sideLink('projekty', 'Projekty', 'projects'), sideLink('kontakty', 'Kontakty', 'contacts'),
+      sideLink('pliki', 'Pliki i zdjęcia', 'files'), sideLink('asystent', 'Pisma i dokumenty', 'doc')),
     h('div', { class: 'side-bottom' },
       h('button', { class: 'nav-item', onclick: openSearch }, icon('search', 22), h('span', null, 'Szukaj'), h('kbd', null, '/')),
-      h('a', { class: 'nav-item', href: '#/ustawienia', dataset: { tab: 'ustawienia' } }, icon('settings', 22), h('span', null, 'Ustawienia')),
+      sideLink('ustawienia', 'Ustawienia', 'settings'),
       h('div', { class: 'side-user' }, avatar(M.partnerName(M.me()), { size: 32, kind: 'me' }), h('span', null, M.partnerName(M.me())),
         h('button', { class: 'icon-btn', 'aria-label': 'Zablokuj', title: 'Zablokuj', onclick: () => showLock() }, icon('lock', 18)))));
 
@@ -221,11 +226,15 @@ function buildShell() {
   const actionsEl = h('div', { class: 'top-actions' });
   const topbar = h('header', { class: 'topbar' }, backBtn, titleEl, actionsEl);
   const content = h('main', { class: 'content', id: 'content', tabindex: '-1' });
-  const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Nawigacja' }, TABS.map(([k, l, i]) => navItem(k, l, i)));
-  const fab = h('button', { class: 'fab', 'aria-label': 'Dodaj', onclick: quickAdd }, icon('plus', 28));
+  // tab bar: Dziś · Projekty · ✦ · Kontakty · Więcej
+  const center = h('button', { class: 'tab-ai', 'aria-label': 'Asystent – dodaj lub zapytaj', onclick: () => openAssist() },
+    h('span', { class: 'tab-ai-orb' }, icon('ai', 28)), h('span', { class: 'tab-ai-label' }, 'Asystent'));
+  const tabbar = h('nav', { class: 'tabbar', 'aria-label': 'Nawigacja' },
+    navItem('dzis', 'Dziś', 'today'), navItem('projekty', 'Projekty', 'projects'), center,
+    navItem('kontakty', 'Kontakty', 'contacts'), navItem('wiecej', 'Więcej', 'grid'));
 
-  app.append(h('div', { class: 'shell' }, sidebar, h('div', { class: 'main' }, topbar, content)), tabbar, fab);
-  shell = { content, titleEl, actionsEl, backBtn, sidebar, tabbar, fab };
+  app.append(h('div', { class: 'shell' }, sidebar, h('div', { class: 'main' }, topbar, content)), tabbar);
+  shell = { content, titleEl, actionsEl, backBtn, sidebar, tabbar };
 }
 
 let lastRouteKey = null;
@@ -249,7 +258,8 @@ function render(opts = {}) {
         else view = renderAssistant();
         break;
       case 'dokument': view = renderDoc(r.params[0]); break;
-      case 'ustawienia': view = renderSettings(); break;
+      case 'ustawienia': view = renderSettings(r.params[0]); break;
+      case 'wiecej': view = renderMore(); break;
       case 'canva-powrot': {
         let st = {};
         try { st = JSON.parse(atob((r.query.get('s') || '').replace(/-/g, '+').replace(/_/g, '/'))); } catch { /* ignore */ }
@@ -259,7 +269,7 @@ function render(opts = {}) {
       }
       case 'dolacz': {
         const prefill = r.raw;
-        navigate('ustawienia', { replace: true });
+        navigate('ustawienia/zespol', { replace: true });
         if (!cloud.isLinked()) setTimeout(() => joinSheet(prefill), 50); else toast('To urządzenie jest już połączone z agencją.');
         return;
       }
@@ -273,7 +283,8 @@ function render(opts = {}) {
   const sameRoute = routeKey === lastRouteKey;
   // forms (letter, mock-up, document) keep their state: don't redraw them on background data changes
   if (sameRoute && opts.fromData && ['asystent/pismo', 'asystent/makieta', 'dokument'].some((p) => routeKey.startsWith(p))) return;
-  if (sameRoute && opts.fromData && document.activeElement?.closest('[data-keep]')) return;
+  // typing in the page's own assistant box: don't wipe it (the ✦ sheet is outside the page, so the page behind it still updates)
+  if (sameRoute && opts.fromData && shell.content.contains(document.activeElement) && document.activeElement.closest('[data-keep]')) return;
   const y = window.scrollY;
   clear(shell.content).append(view.node);
   shell.titleEl.textContent = view.title;
@@ -281,17 +292,14 @@ function render(opts = {}) {
   clear(shell.actionsEl);
   if (view.action) shell.actionsEl.append(view.action);
   if (cloud.isLinked()) shell.actionsEl.append(syncDot());
-  if (!view.back) {
-    shell.actionsEl.append(
-      h('button', { class: 'icon-btn only-narrow', 'aria-label': 'Szukaj', onclick: openSearch }, icon('search')),
-      h('button', { class: 'icon-btn only-narrow', 'aria-label': 'Ustawienia', onclick: () => navigate('ustawienia') }, icon('settings')));
-  }
+
   shell.backBtn.hidden = !view.back;
   shell.backBtn.onclick = () => back(view.back);
   document.body.classList.toggle('has-back', !!view.back);
   const tab = TAB_OF[r.name] ?? r.name;
-  document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('on', el.dataset.tab === tab));
-  shell.fab.hidden = ['ustawienia', 'dokument', 'projekt', 'kontakt'].includes(r.name) || (r.name === 'asystent' && r.params.length > 0);
+  document.querySelectorAll('.tabbar .nav-item').forEach((el) => el.classList.toggle('on', el.dataset.tab === tab));
+  const side = { projekt: 'projekty', kontakt: 'kontakty', dokument: 'asystent' }[r.name] || r.name;
+  document.querySelectorAll('.sidebar .nav-item[data-side]').forEach((el) => el.classList.toggle('on', el.dataset.side === side));
   if (sameRoute) window.scrollTo(0, y);
   else { window.scrollTo(0, 0); lastRouteKey = routeKey; }
   if (opts.keepFocus) {
@@ -304,7 +312,7 @@ function syncDot() {
   const st = cloud.status();
   const label = { syncing: 'Synchronizacja…', ok: 'Zsynchronizowano', offline: 'Offline – zmiany zostaną wysłane później', error: `Błąd synchronizacji: ${st.error || ''}`, signedout: 'Zaloguj się ponownie (Ustawienia)' }[st.phase] || 'Synchronizacja';
   return h('button', { class: `icon-btn sync-dot sync-${st.phase}`, 'aria-label': label, title: label, onclick: () => {
-    if (st.phase === 'signedout') { navigate('ustawienia'); return; }
+    if (st.phase === 'signedout') { navigate('ustawienia/zespol'); return; }
     cloud.syncNow().then(() => toast('Zsynchronizowano')).catch((e) => toast(e.message));
   } }, icon('sync', 20));
 }
@@ -323,63 +331,8 @@ onRoute(() => { closeAllSheets(); render(); });
 db.onChange(() => queueRender({ fromData: true }));
 window.addEventListener('rerender', (e) => render(e.detail || {}));
 
-// ---------- Quick add ----------
-function quickAdd() {
-  const input = h('input', { type: 'text', class: 'qa-input', placeholder: 'np. Zadzwonić do Magazynu Styl jutro o 15', autocomplete: 'off', enterkeyhint: 'done', 'aria-label': 'Nowe zadanie' });
-  const preview = h('div', { class: 'qa-preview' });
-  let owner = M.me();
-  const ownerSeg = h('div', { class: 'seg' }, M.partnerOptions(false).map(([id, name]) =>
-    h('button', { type: 'button', class: `seg-btn ${id === owner ? 'on' : ''}`, onclick: (e) => {
-      owner = id; ownerSeg.querySelectorAll('.seg-btn').forEach((b) => b.classList.remove('on')); e.currentTarget.classList.add('on');
-    } }, id === 'oba' ? 'Obie osoby' : name.split(' ')[0])));
-  const upd = () => {
-    const p = M.parseQuick(input.value);
-    clear(preview);
-    if (p.due) preview.append(h('span', { class: 'chip' }, icon('calendar', 14), relDay(p.due), p.time ? ` · ${p.time}` : ''));
-    else if (input.value.trim()) preview.append(h('span', { class: 'chip chip-muted' }, icon('calendar', 14), 'Dziś (domyślnie)'));
-  };
-  input.addEventListener('input', upd);
-  const save = async (more = false) => {
-    const p = M.parseQuick(input.value);
-    if (!p.title) { input.focus(); toast('Wpisz treść zadania.'); return; }
-    const vals = { title: p.title, due: p.due || todayStr(), time: p.time || '', owner, kind: 'zadanie', priority: 'normalny', done: false };
-    s.close();
-    if (more) { editTask(null, vals); return; }
-    const t = await db.put('tasks', vals);
-    db.logActivity(`dodał(a) zadanie: ${t.title}`, { col: 'tasks', id: t.id });
-    toast(`Dodano: ${relDay(t.due).toLowerCase()}${t.time ? ` ${t.time}` : ''}`);
-  };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
-
-  const sc = (ic, label, fn) => h('button', { class: 'shortcut', onclick: () => { s.close(); fn(); } }, h('span', { class: 'sc-ic' }, icon(ic, 22)), h('span', null, label));
-  const s = openSheet({
-    title: 'Dodaj',
-    body: [
-      h('div', { class: 'qa-box' }, input, preview),
-      h('div', { class: 'qa-owner' }, h('span', { class: 'field-label' }, 'Dla kogo'), ownerSeg),
-      h('div', { class: 'qa-row' },
-        h('button', { class: 'btn btn-ghost', onclick: () => save(true) }, 'Więcej opcji'),
-        ai.available() ? h('button', { class: 'btn btn-soft', title: 'Asystent AI wykona polecenie (np. e-mail, kilka zadań naraz)', onclick: () => {
-          const text = input.value.trim();
-          if (!text) { input.focus(); toast('Wpisz lub podyktuj polecenie.'); return; }
-          s.close(); navigate('asystent'); sendCommand(text);
-        } }, icon('ai', 16), 'Z AI') : null,
-        h('button', { class: 'btn btn-primary', onclick: () => save() }, 'Dodaj zadanie')),
-      h('p', { class: 'hint-line' }, 'Rozpoznaję daty: dziś, jutro, pojutrze, w piątek, 12.10, za 3 dni, o 15, 15:30.'),
-      h('div', { class: 'shortcuts' },
-        sc('camera', 'Zdjęcie', () => uploadFlow({ camera: true })),
-        sc('upload', 'Plik', () => uploadFlow()),
-        sc('projects', 'Projekt', () => editProject()),
-        sc('contacts', 'Kontakt', () => editContact(null, db.kvGet('contactKind', 'klient'))),
-        sc('doc', 'Pismo', () => navigate('asystent/pismo')),
-        sc('instagram', 'Makieta', () => navigate('asystent/makieta'))),
-    ],
-  });
-  input.focus({ preventScroll: true });
-}
-
 // ---------- Search ----------
-function openSearch() {
+export function openSearch() {
   const input = h('input', { type: 'search', class: 'qa-input', placeholder: 'Szukaj klientów, projektów, zadań…', 'aria-label': 'Szukaj' });
   const results = h('div', { class: 'search-results' });
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ł/g, 'l');
@@ -416,12 +369,13 @@ function openSearch() {
   input.focus({ preventScroll: true }); // synchronously, so the first typed keys are not lost
 }
 
+window.addEventListener('open-search', () => openSearch());
 document.addEventListener('keydown', (e) => {
   if (!unlocked) return;
   const tag = document.activeElement?.tagName;
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || document.querySelector('.sheet-backdrop')) return;
   if (e.key === '/' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) { e.preventDefault(); openSearch(); }
-  else if (e.key.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); quickAdd(); }
+  else if (e.key.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openAssist(); }
 });
 
 // ---------- Service worker ----------

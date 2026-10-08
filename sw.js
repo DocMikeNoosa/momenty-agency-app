@@ -1,10 +1,10 @@
 // Offline support: the whole app is cached so it opens without a connection.
-const VERSION = 'momenty-v2.1.0';
+const VERSION = 'momenty-v3.0.0';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/db.js', 'js/auth.js', 'js/ui.js', 'js/model.js', 'js/router.js', 'js/components.js', 'js/letters.js', 'js/version.js',
   'js/cloud.js', 'js/agency.js', 'js/ai.js', 'js/agent.js', 'js/instagram.js', 'js/pricing.js', 'js/contracts.js',
-  'js/views/today.js', 'js/views/projects.js', 'js/views/contacts.js', 'js/views/files.js', 'js/views/assistant.js', 'js/views/settings.js', 'js/views/team.js',
+  'js/views/today.js', 'js/views/more.js', 'js/assist.js', 'js/views/projects.js', 'js/views/contacts.js', 'js/views/files.js', 'js/views/assistant.js', 'js/views/settings.js', 'js/views/team.js',
   'assets/icons/logo-white.png', 'assets/icons/icon-192.png', 'assets/icons/icon-512.png', 'assets/icons/apple-touch-icon.png', 'assets/icons/favicon-64.png',
   'assets/fonts/inter-latin-400-normal.woff2', 'assets/fonts/inter-latin-ext-400-normal.woff2',
   'assets/fonts/inter-latin-500-normal.woff2', 'assets/fonts/inter-latin-ext-500-normal.woff2',

@@ -53,7 +53,9 @@ await i.nth(0).fill('Kasia'); await i.nth(1).fill('Ola'); await i.nth(2).fill('m
 await page.locator('.brand-form button[type=submit]').click();
 await page.locator('button:has-text("Pokaż z przykładowymi danymi")').click();
 await page.waitForSelector('.hero');
-await page.goto(`${APP}#/ustawienia`);
+await page.waitForSelector('.tour', { timeout: 5000 }).then(() => page.locator('.sheet [aria-label=Zamknij]').first().click()).catch(() => {});
+await page.waitForTimeout(400);
+await page.goto(`${APP}#/ustawienia/zespol`);
 await page.locator('.set-row:has-text("Połącz z serwerem agencji")').click();
 await page.locator('.sheet .field:has-text("Adres serwera") input').fill(SUPA);
 await page.locator('.sheet .field:has-text("Klucz publiczny") input').fill(ANON);
@@ -129,8 +131,8 @@ await page.waitForSelector('.price-item');
 ok(await page.locator('.price-item').nth(1).locator('.pi-price').inputValue() === '300', 'wycena zapisana');
 
 step('Umowa (szablon i AI)');
-await page.locator('.tab:has-text("Dokumenty")').click();
-await page.locator('button:has-text("Umowa")').click();
+await page.locator('.tab:has-text("Wycena")').click();
+await page.locator('.btn:has-text("Przygotuj umowę")').click();
 await page.waitForSelector('.sheet:has-text("Umowa do projektu")');
 await page.screenshot({ path: `${shots}/55-umowa-opcje.png` });
 await page.locator('.sheet-foot button:has-text("Z szablonu")').click();
@@ -143,8 +145,9 @@ await page.screenshot({ path: `${shots}/56-umowa.png`, fullPage: true });
 await script([{ stop_reason: 'end_turn', content: [{ type: 'text', text: 'UMOWA O ŚWIADCZENIE USŁUG\n§ 1. Przedmiot umowy\n(tekst z AI)' }] }]);
 await page.goBack();
 await page.waitForSelector('.tabs');
-await page.locator('.tab:has-text("Dokumenty")').click();
-await page.locator('.btn:has-text("Umowa")').click();
+await page.locator('.tab:has-text("Wycena")').click();
+ok(await page.locator('.list-row:has-text("Umowa")').count() >= 1, 'umowa widoczna przy wycenie projektu');
+await page.locator('.btn:has-text("Nowa wersja umowy")').click();
 await page.locator('.sheet-foot button:has-text("Napisz z AI")').click();
 await page.waitForSelector('.page-narrow .out-body', { timeout: 20000 });
 ok((await page.locator('.out-body').inputValue()).includes('(tekst z AI)'), 'umowa napisana przez AI');
@@ -155,7 +158,7 @@ step('Pismo z AI – inne dla każdej firmy');
 await script([{ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ subject: 'Nowe serum Atelier Lumière – temat dla Magazynu Styl', body: 'Dzień dobry,\n\nobserwujemy działy beauty…\n\nZ poważaniem,\nKasia' }) }] }]);
 await page.goto(`${APP}#/asystent/pismo`);
 await page.waitForSelector('.out-body');
-await page.locator('.field:has-text("Odbiorca") select').selectOption({ label: 'Anna Lewandowska (dziennikarz / media)' });
+await page.locator('.field:has-text("Do kogo") select').selectOption({ label: 'Anna Lewandowska (dziennikarz / media)' });
 await page.locator('#content button:has-text("Napisz z AI")').click();
 await page.waitForFunction(() => document.querySelector('.out-subject')?.value.includes('Magazynu Styl'), null, { timeout: 20000 });
 ok(true, 'pismo wygenerowane przez AI');
@@ -166,7 +169,7 @@ ok(lprompt.output_config?.format?.type === 'json_schema', 'odpowiedź w ustruktu
 await page.screenshot({ path: `${shots}/57-pismo-ai.png`, fullPage: true });
 
 step('Kalendarz Google – połączenie i wysyłka zadań');
-await page.goto(`${APP}#/ustawienia`);
+await page.goto(`${APP}#/ustawienia/polaczenia`);
 await page.locator('.set-row:has-text("Kalendarz Google")').click();
 await page.waitForSelector('.sheet a:has-text("Otwórz i zatwierdź")');
 const gHref = await page.locator('.sheet a:has-text("Otwórz i zatwierdź")').getAttribute('href');
@@ -182,7 +185,7 @@ ok(gEvents.some((e) => e.summary === 'Zadzwonić do Magazynu Styl' && e.reminder
 ok(!gEvents.some((e) => e.summary === 'Akceptacja menu degustacyjnego z szefem kuchni'), 'zadania drugiej osoby nie trafiają do mojego kalendarza');
 
 step('Canva – połączenie, przeglądanie i import do projektu');
-await page.goto(`${APP}#/ustawienia`);
+await page.goto(`${APP}#/ustawienia/polaczenia`);
 await page.locator('.set-row:has-text("Canva")').first().click();
 await page.waitForSelector('.sheet a:has-text("Otwórz i zatwierdź")');
 const cHref = await page.locator('.sheet a:has-text("Otwórz i zatwierdź")').getAttribute('href');
@@ -210,6 +213,32 @@ const before = await page.locator('.tile').count();
 await page.goto(`${APP}#/canva-powrot?design=DAF1&s=${retState}`);
 await page.waitForSelector('text=Zaktualizowano z Canvy', { timeout: 15000 }).then(() => ok(true, 'powrót z Canvy pobiera nową wersję grafiki')).catch(() => ok(false, 'powrót z Canvy pobiera nową wersję grafiki'));
 ok(page.url().includes(`projekt/${projectId}`) && (await page.locator('.tile').count()) === before, 'grafika zaktualizowana (bez duplikatu)');
+
+step('Asystent na ekranie projektu – jedno stuknięcie');
+await page.goto(`${APP}#/projekt/${projectId}`);
+await page.waitForSelector('.ai-strip');
+await script([
+  { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu_p', name: 'propose_pricing', input: { project_id: projectId } }] },
+  { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Otwieram wycenę.' }] },
+  { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify({ items: [{ name: 'Koordynacja kampanii', qty: 1, unit: 'ryczałt', unit_price: 9000, note: '' }], summary: 'Wycena z kontekstu projektu.', assumptions: [], range_low: 9000, range_high: 12000 }) }] },
+]);
+await page.locator('.ai-chip:has-text("Zaproponuj wycenę")').click();
+await page.waitForSelector('.ai-proposal', { timeout: 20000 });
+ok(page.url().includes('tab=pieniadze'), 'przycisk „Zaproponuj wycenę” otwiera wycenę projektu');
+ok((await page.locator('.ai-proposal').textContent()).includes('Koordynacja kampanii'), 'propozycja AI gotowa do sprawdzenia');
+const pcalls = (await mockLog()).filter((l) => l.path === '/v1/messages').map((l) => JSON.parse(l.body));
+const firstP = JSON.stringify(pcalls.at(-3).messages);
+ok(firstP.includes('biezacy_ekran') && firstP.includes('Premiera serum'), 'asystent dostał kontekst otwartego projektu');
+await page.screenshot({ path: `${shots}/62-wycena-jednym-stuknieciem.png` });
+await script([
+  { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu_m', name: 'prepare_mockup', input: { project_id: projectId, caption: 'Jesień pełna blasku ✨ #atelierlumiere', format: 'portrait' } }] },
+  { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Makieta gotowa do podglądu.' }] },
+]);
+await page.goto(`${APP}#/projekt/${projectId}`);
+await page.locator('.ai-chip:has-text("Makieta posta")').click();
+await page.waitForSelector('.mock-canvas', { timeout: 20000 });
+ok((await page.locator('.field:has-text("Opis posta") textarea').inputValue()).includes('#atelierlumiere'), 'makieta otwarta z opisem napisanym przez AI');
+await page.screenshot({ path: `${shots}/63-makieta-ai.png` });
 
 step('Instagram');
 await page.goto(`${APP}#/kontakty/influencer`);

@@ -7,6 +7,7 @@ import {
 import { navigate } from '../router.js';
 import * as cloud from '../cloud.js';
 import * as ai from '../ai.js';
+import { openAssist, suggestionsFor } from '../assist.js';
 import { pricingOf, totals, pln, newItem, UNITS, suggestPrice, printQuote } from '../pricing.js';
 import { CONTRACT_OPTIONS, aiContract, templateContract } from '../contracts.js';
 import { agencyProfile } from '../agency.js';
@@ -88,7 +89,8 @@ function kanban(ps) {
 }
 
 // ---------- Project detail (tabs: overview · tasks · pricing · files · documents) ----------
-const TABS = [['przeglad', 'Przegląd'], ['zadania', 'Zadania'], ['wycena', 'Wycena'], ['pliki', 'Pliki'], ['dokumenty', 'Dokumenty']];
+// [key, label, short label for phones]
+const TABS = [['przeglad', 'Przegląd', 'Przegląd'], ['pieniadze', 'Wycena i umowa', 'Wycena'], ['pliki', 'Pliki i dokumenty', 'Pliki']];
 
 export function renderProject(id, query) {
   const p = db.get('projects', id);
@@ -99,23 +101,21 @@ export function renderProject(id, query) {
   const files = db.all('files').filter((f) => f.projectId === p.id);
   const docs = db.all('docs').filter((d) => d.projectId === p.id);
   const pct = M.projectProgress(p);
-  const counts = { zadania: tasks.filter((t) => !t.done).length, pliki: files.length + (p.canva || []).length, dokumenty: docs.length };
+  const counts = { pliki: files.length + (p.canva || []).length + docs.length };
 
   const header = h('div', { class: 'detail-head proj-head' },
     h('div', { class: 'detail-kicker' }, client ? client.name : 'Projekt', ' · ', M.stageLabel(p.stage)),
     h('h1', { class: 'detail-title' }, p.title),
     h('div', { class: 'detail-progress' }, progressBar(pct), h('span', null, `${pct}%`)));
 
-  const tabsEl = h('div', { class: 'tabs', role: 'tablist' }, TABS.map(([k, label]) => h('button', {
+  const tabsEl = h('div', { class: 'tabs', role: 'tablist' }, TABS.map(([k, label, short]) => h('button', {
     class: `tab ${k === tab ? 'on' : ''}`, role: 'tab', 'aria-selected': k === tab,
     onclick: () => navigate(`projekt/${p.id}?tab=${k}`, { replace: true }),
-  }, label, counts[k] ? h('span', { class: 'count' }, counts[k]) : null)));
+  }, h('span', { class: 'only-wide-label' }, label), h('span', { class: 'only-narrow-label' }, short), counts[k] ? h('span', { class: 'count' }, counts[k]) : null)));
 
   let body;
-  if (tab === 'zadania') body = tasksTab(p, tasks);
-  else if (tab === 'wycena') body = pricingTab(p);
-  else if (tab === 'pliki') body = filesTab(p, files);
-  else if (tab === 'dokumenty') body = docsTab(p, docs);
+  if (tab === 'pieniadze') body = h('div', { class: 'col' }, pricingTab(p, { autoAI: query?.get('ai') === '1' }), contractsBlock(p, docs));
+  else if (tab === 'pliki') body = h('div', { class: 'col' }, filesTab(p, files), docsTab(p, docs.filter((d) => d.kind !== 'contract')));
   else body = overviewTab(p, client, tasks);
 
   return {
@@ -131,7 +131,7 @@ export function renderProject(id, query) {
           toast('Projekt usunięty');
         }
       } }, icon('trash'))),
-    node: h('div', { class: 'page page-detail page-project' }, header, tabsEl, h('div', { class: 'tab-body' }, body)),
+    node: h('div', { class: 'page page-detail page-project' }, header, aiStrip(p), tabsEl, h('div', { class: 'tab-body' }, body)),
   };
 }
 
@@ -146,16 +146,18 @@ function overviewTab(p, client, tasks) {
       toast(`Etap: ${label}`);
     },
   }, h('span', { class: 'step-dot' }, i < si ? icon('check', 12) : null), h('span', { class: 'step-label' }, label))));
-  const next = tasks.filter((t) => !t.done).slice(0, 3);
+  const open = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
   const pr = pricingOf(p);
   const tot = totals(pr);
   const infl = (p.influencerIds || []).map((i) => db.get('contacts', i)).filter(Boolean);
   return h('div', { class: 'two-col' },
     h('div', { class: 'col' },
       section('Etap', stepper),
-      section('Najbliższe zadania', next.length ? h('div', { class: 'list' }, next.map((t) => taskRow(t, { showDate: true, showProject: false })))
-        : h('p', { class: 'muted pad' }, 'Brak otwartych zadań.'),
-      h('button', { class: 'link-btn', onclick: () => navigate(`projekt/${p.id}?tab=zadania`, { replace: true }) }, 'Wszystkie zadania', icon('chevron', 16))),
+      section(`Zadania (${open.length})`, open.length ? h('div', { class: 'list' }, open.map((t) => taskRow(t, { showDate: true, showProject: false })))
+        : h('p', { class: 'muted pad' }, 'Brak otwartych zadań – poproś asystenta: „Zaplanuj kolejne kroki”.'),
+      h('button', { class: 'btn btn-soft btn-sm', onclick: () => editTask(null, { projectId: p.id, contactId: p.clientId || '' }) }, icon('plus', 16), 'Nowe zadanie')),
+      done.length ? h('details', { class: 'done-tasks' }, h('summary', null, `Ukończone (${done.length})`), h('div', { class: 'list' }, done.map((t) => taskRow(t, { showDate: true, showProject: false })))) : null,
       p.description ? section('Opis i brief', h('div', { class: 'prose' }, p.description)) : null),
     h('div', { class: 'col' },
       section('Szczegóły', h('dl', { class: 'facts' },
@@ -163,7 +165,7 @@ function overviewTab(p, client, tasks) {
         fact('Prowadzi', M.ownerLabel(p.owner) || '—'),
         fact('Rodzaj', M.PROJECT_TYPES.find((t) => t[0] === p.type)?.[1] || '—'),
         fact('Termin', p.due ? `${fullDate(p.due)} (${relDay(p.due).toLowerCase()})` : '—'),
-        fact('Wycena', pr.items.length ? h('a', { href: `#/projekt/${p.id}?tab=wycena` }, `${pln(tot.net)} netto`) : (p.budget || '—')),
+        fact('Wycena', pr.items.length ? h('a', { href: `#/projekt/${p.id}?tab=pieniadze` }, `${pln(tot.net)} netto`) : (p.budget || '—')),
         p.goal ? fact('Cel / KPI', p.goal) : null)),
       section(`Influencerzy (${infl.length})`,
         infl.length ? h('div', { class: 'list' }, infl.map((c) => h('div', { class: 'list-row-wrap' }, contactRow(c),
@@ -174,16 +176,17 @@ function overviewTab(p, client, tasks) {
         h('button', { class: 'link-btn', onclick: () => pickInfluencer(p) }, icon('plus', 16), 'Przypisz'))));
 }
 
-function tasksTab(p, tasks) {
-  return h('div', { class: 'col narrow-col' },
-    h('div', { class: 'row-gap' },
-      h('button', { class: 'btn btn-primary btn-sm', onclick: () => editTask(null, { projectId: p.id, contactId: p.clientId || '' }) }, icon('plus', 16), 'Nowe zadanie')),
-    tasks.length ? h('div', { class: 'list' }, tasks.map((t) => taskRow(t, { showDate: true, showProject: false })))
-      : emptyState('Brak zadań w tym projekcie.', null, null, 'check'));
+// ---------- one-tap AI actions for this project ----------
+function aiStrip(p) {
+  const act = (ic, label, prompt) => h('button', { class: 'ai-chip', onclick: () => openAssist({ prompt }) }, icon(ic, 16), label);
+  return h('div', { class: 'ai-strip', role: 'group', 'aria-label': 'Asystent dla tego projektu' },
+    h('span', { class: 'ai-strip-label' }, icon('ai', 15), 'Asystent'),
+    suggestionsFor({ kind: 'project', id: p.id }).map(([ic, label, prompt]) => act(ic, label, prompt)));
 }
 
 // ---------- pricing ----------
-function pricingTab(p) {
+const proposals = new Map(); // project id → { loading } | { result } | { error }
+function pricingTab(p, { autoAI = false } = {}) {
   const pr = pricingOf(p);
   const wrap = h('div', { class: 'pricing', dataset: { keep: '1' } });
   const totalsEl = h('div', { class: 'price-totals' });
@@ -239,27 +242,45 @@ function pricingTab(p) {
     h('div', { class: 'card pad-card' }, list),
     h('div', { class: 'two-col pricing-bottom' }, h('div', { class: 'card pad-card' }, settings), h('div', { class: 'card pad-card' }, totalsEl)));
 
+  // the proposal lives outside the page, so background redraws (sync) don't lose it
+  function drawAI() {
+    const st = proposals.get(p.id);
+    clear(aiBox);
+    if (!st) return;
+    if (st.loading) { aiBox.append(h('div', { class: 'notice' }, h('span', { class: 'spinner' }), 'AI przygotowuje propozycję wyceny…')); return; }
+    if (st.error) { aiBox.append(h('div', { class: 'notice' }, icon('ai', 20), st.error)); return; }
+    const r = st.result;
+    const net = r.items.reduce((sum, i) => sum + i.qty * i.unit_price, 0);
+    aiBox.append(h('div', { class: 'card pad-card ai-proposal' },
+      h('div', { class: 'section-head' }, h('h3', null, 'Propozycja AI'), h('strong', null, `${pln(net)} netto`)),
+      h('p', null, r.summary),
+      h('p', { class: 'small muted' }, `Zakres rynkowy: ${pln(r.range_low)} – ${pln(r.range_high)} netto`),
+      h('ul', { class: 'ai-items' }, r.items.map((i) => h('li', null, `${i.name} – ${i.qty} ${i.unit} × ${pln(i.unit_price)}`, i.note ? h('div', { class: 'small muted' }, i.note) : null))),
+      r.assumptions?.length ? h('details', null, h('summary', null, 'Założenia'), h('ul', null, r.assumptions.map((a) => h('li', { class: 'small' }, a)))) : null,
+      h('p', { class: 'hint-line' }, 'To szacunek AI – sprawdź i dopasuj ceny przed wysłaniem oferty.'),
+      h('div', { class: 'row-gap' },
+        h('button', { class: 'btn btn-primary', onclick: () => {
+          pr.items = r.items.map((i) => newItem({ name: i.name, qty: i.qty, unit: i.unit, price: Math.round(i.unit_price), note: i.note }));
+          if (r.assumptions?.length && !pr.notes) pr.notes = `Założenia: ${r.assumptions.join('; ')}`;
+          proposals.delete(p.id);
+          drawItems(); drawTotals(); drawAI();
+          db.put('projects', { id: p.id, pricing: pr });
+          toast('Wstawiono propozycję – możesz ją edytować');
+        } }, 'Zastosuj'),
+        h('button', { class: 'btn btn-ghost', onclick: () => { proposals.delete(p.id); drawAI(); } }, 'Odrzuć'))));
+  }
   async function suggest() {
-    if (!ai.available()) { toast('AI działa po połączeniu z serwerem agencji (Ustawienia).'); return; }
-    clear(aiBox).append(h('div', { class: 'notice' }, h('span', { class: 'spinner' }), 'AI przygotowuje propozycję wyceny…'));
-    try {
-      const r = await suggestPrice(p);
-      const net = r.items.reduce((s, i) => s + i.qty * i.unit_price, 0);
-      clear(aiBox).append(h('div', { class: 'card pad-card ai-proposal' },
-        h('div', { class: 'section-head' }, h('h3', null, 'Propozycja AI'), h('strong', null, `${pln(net)} netto`)),
-        h('p', null, r.summary),
-        h('p', { class: 'small muted' }, `Zakres rynkowy: ${pln(r.range_low)} – ${pln(r.range_high)} netto`),
-        h('ul', { class: 'ai-items' }, r.items.map((i) => h('li', null, `${i.name} – ${i.qty} ${i.unit} × ${pln(i.unit_price)}`, i.note ? h('div', { class: 'small muted' }, i.note) : null))),
-        r.assumptions?.length ? h('details', null, h('summary', null, 'Założenia'), h('ul', null, r.assumptions.map((a) => h('li', { class: 'small' }, a)))) : null,
-        h('p', { class: 'hint-line' }, 'To szacunek AI – sprawdź i dopasuj ceny przed wysłaniem oferty.'),
-        h('div', { class: 'row-gap' },
-          h('button', { class: 'btn btn-primary btn-sm', onclick: () => {
-            pr.items = r.items.map((i) => newItem({ name: i.name, qty: i.qty, unit: i.unit, price: Math.round(i.unit_price), note: i.note }));
-            if (r.assumptions?.length && !pr.notes) pr.notes = `Założenia: ${r.assumptions.join('; ')}`;
-            drawItems(); drawTotals(); save(); clear(aiBox); toast('Wstawiono propozycję – możesz ją edytować');
-          } }, 'Zastosuj (zastąp pozycje)'),
-          h('button', { class: 'btn btn-ghost btn-sm', onclick: () => clear(aiBox) }, 'Odrzuć'))));
-    } catch (e) { clear(aiBox).append(h('div', { class: 'notice' }, icon('ai', 20), e.message)); }
+    if (!ai.available()) { toast('AI działa po połączeniu z serwerem agencji (Więcej → Ustawienia).'); return; }
+    proposals.set(p.id, { loading: true });
+    drawAI();
+    try { proposals.set(p.id, { result: await suggestPrice(p) }); } catch (e) { proposals.set(p.id, { error: e.message }); }
+    const live = document.querySelector('.pricing');
+    if (live && live !== wrap) window.dispatchEvent(new Event('rerender')); else drawAI();
+  }
+  drawAI();
+  if (autoAI && !proposals.get(p.id)) {
+    history.replaceState(null, '', `#/projekt/${p.id}?tab=pieniadze`); // don't re-run on reload/back
+    setTimeout(() => { suggest(); window.dispatchEvent(new Event('rerender')); }, 0);
   }
   return wrap;
 }
@@ -424,11 +445,21 @@ function canvaCreate(p) {
 }
 
 // ---------- documents & contracts ----------
+function contractsBlock(p, docs) {
+  const contracts = docs.filter((d) => d.kind === 'contract');
+  return section('Umowa', h('div', { class: 'col' },
+    contracts.length ? h('div', { class: 'list' }, contracts.map((d) => h('button', { class: 'list-row', onclick: () => navigate(`dokument/${d.id}`) },
+      h('span', { class: 'row-ic' }, icon('file', 20)),
+      h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, d.title), h('div', { class: 'row-meta' }, `projekt umowy · ${relDay(d.updatedAt.slice(0, 10))}`)),
+      icon('chevron', 18, 'muted')))) : h('p', { class: 'muted pad' }, 'Umowa powstanie z danych projektu i wyceny.'),
+    h('button', { class: 'btn btn-soft', onclick: () => contractSheet(p) }, icon('file', 18), contracts.length ? 'Nowa wersja umowy' : 'Przygotuj umowę')));
+}
+
 function docsTab(p, docs) {
   return h('div', { class: 'col narrow-col' },
     h('div', { class: 'row-gap' },
       h('button', { class: 'btn btn-primary btn-sm', onclick: () => navigate(`asystent/pismo?projekt=${p.id}`) }, icon('doc', 16), 'Napisz pismo'),
-      h('button', { class: 'btn btn-soft btn-sm', onclick: () => contractSheet(p) }, icon('file', 16), 'Umowa')),
+      h('button', { class: 'btn btn-soft btn-sm', onclick: () => navigate(`asystent/makieta?projekt=${p.id}`) }, icon('instagram', 16), 'Makieta posta')),
     docs.length ? h('div', { class: 'list' }, docs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((d) => h('button', { class: 'list-row', onclick: () => navigate(`dokument/${d.id}`) },
       h('span', { class: 'row-ic' }, icon(d.kind === 'contract' ? 'file' : d.kind === 'email' ? 'mail' : 'doc', 20)),
       h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, d.title), h('div', { class: 'row-meta' }, `${d.kind === 'contract' ? 'Umowa · ' : ''}${relDay(d.updatedAt.slice(0, 10))}`)),

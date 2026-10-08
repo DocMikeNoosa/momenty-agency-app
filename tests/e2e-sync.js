@@ -45,6 +45,11 @@ async function localSetup(page, me, other) {
   await page.locator('.brand-form button[type=submit]').click();
 }
 
+async function skipTour(page) {
+  await page.waitForSelector('.tour', { timeout: 5000 }).then(() => page.locator('.sheet [aria-label=Zamknij]').first().click()).catch(() => {});
+  await page.waitForTimeout(400);
+}
+
 // ---------------- Admin on a computer
 step('Administratorka łączy aplikację z serwerem i tworzy agencję');
 const actx = await browser.newContext({ viewport: { width: 1280, height: 860 }, locale: 'pl-PL', timezoneId: 'Europe/Warsaw' });
@@ -52,7 +57,8 @@ const A = await actx.newPage(); watch(A, 'admin');
 await localSetup(A, 'Kasia', 'Ola');
 await A.locator('button:has-text("Pokaż z przykładowymi danymi")').click();
 await A.waitForSelector('.hero');
-await A.goto(`${APP}#/ustawienia`);
+await skipTour(A);
+await A.goto(`${APP}#/ustawienia/zespol`);
 await A.locator('.set-row:has-text("Połącz z serwerem agencji")').click();
 await A.locator('.sheet .field:has-text("Adres serwera") input').fill(SUPA);
 await A.locator('.sheet .field:has-text("Klucz publiczny") input').fill(ANON);
@@ -89,6 +95,7 @@ await B.locator('.brand-form .field:has-text("Powtórz") input').fill('Ola-Haslo
 await B.screenshot({ path: `${shots}/42-dolacz-iphone.png` });
 await B.locator('.brand-form button[type=submit]').click();
 await B.waitForSelector('.hero', { timeout: 30000 });
+await skipTour(B);
 ok((await B.locator('.hero-title').textContent()).includes('Ola'), 'partnerka zalogowana jako Ola');
 await B.locator('.seg-btn:has-text("Wszystkie")').click();
 await B.waitForTimeout(300);
@@ -96,9 +103,10 @@ ok(await B.locator('.task:has-text("Wysłać paczki PR")').count() === 1, 'dane 
 await B.screenshot({ path: `${shots}/43-partnerka-dzis.png`, fullPage: true });
 
 step('Zmiany w obie strony');
-await B.locator('.fab').click();
-await B.locator('.qa-input').fill('Zadzwonić do Vogue jutro o 11');
-await B.locator('button:has-text("Dodaj zadanie")').click();
+await B.locator('.tab-ai').click();
+await B.locator('#agent-input').fill('Zadzwonić do Vogue jutro o 11');
+await B.locator('.sheet button:has-text("Tylko zadanie")').click(); // without AI: plain task with date parsing
+await B.keyboard.press('Escape');
 await B.waitForTimeout(3500); // auto-sync after local change
 await A.goto(`${APP}#/dzis`);
 await A.locator('.seg-btn:has-text("Wszystkie")').click();

@@ -6,6 +6,7 @@ import {
 } from '../components.js';
 import { navigate } from '../router.js';
 import { instagramLookup } from '../instagram.js';
+import { openAssist, suggestionsFor } from '../assist.js';
 import { openSheet, buildForm } from '../ui.js';
 
 /** Look someone up on Instagram; optionally save the handle on a contact. */
@@ -109,6 +110,8 @@ export function renderContact(id) {
     h('h1', { class: 'detail-title' }, c.name),
     M.contactSubtitle(c) ? h('div', { class: 'muted' }, M.contactSubtitle(c)) : null,
     contactActions(c),
+    h('div', { class: 'ai-strip ai-strip-center' }, h('span', { class: 'ai-strip-label' }, icon('ai', 15), 'Asystent'),
+      suggestionsFor({ kind: 'contact', id: c.id }).map(([ic, label, prompt]) => h('button', { class: 'ai-chip', onclick: () => openAssist({ prompt }) }, icon(ic, 16), label))),
     !c.instagram ? h('button', { class: 'link-btn', onclick: () => instagramSheet(c) }, icon('instagram', 16), 'Znajdź na Instagramie') : null);
 
   return {

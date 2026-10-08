@@ -9,66 +9,97 @@ import { navigate } from '../router.js';
 import { APP_VERSION } from '../version.js';
 import * as cloud from '../cloud.js';
 import { teamSection, integrationsSection, agencySection, installSection } from './team.js';
+import { agencyProfile } from '../agency.js';
 
-export function renderSettings() {
+const PAGES = {
+  zespol: ['Zespół i synchronizacja', 'users'],
+  polaczenia: ['Połączenia', 'link'],
+  agencja: ['Dane agencji', 'building'],
+  bezpieczenstwo: ['Bezpieczeństwo', 'lock'],
+  kopia: ['Kopia i dane', 'download'],
+  instalacja: ['Instalacja i pomoc', 'help'],
+};
+
+/** Settings: a short menu, each item opens its own short page. */
+export function renderSettings(sub) {
+  if (PAGES[sub]) return { title: PAGES[sub][0], back: 'ustawienia', node: h('div', { class: 'page page-narrow' }, ...settingsPage(sub)) };
+  const linked = cloud.isLinked();
+  const g = cloud.connections().google;
+  const item = (key, sub2) => h('button', { class: 'set-row set-row-big', onclick: () => navigate(`ustawienia/${key}`) },
+    h('span', { class: 'row-ic' }, icon(PAGES[key][1], 20)),
+    h('span', { class: 'set-label' }, PAGES[key][0], h('span', { class: 'set-sub' }, sub2)),
+    icon('chevron', 18, 'muted'));
+  return {
+    title: 'Ustawienia',
+    back: 'wiecej',
+    node: h('div', { class: 'page page-narrow' },
+      !linked ? h('div', { class: 'notice' }, icon('sync', 20), h('div', null, h('strong', null, 'Pracujesz tylko na tym urządzeniu'), h('div', { class: 'small' }, 'Połącz z zespołem, aby dane synchronizowały się między Wami i działał asystent AI.')),
+        h('button', { class: 'btn btn-primary btn-sm', onclick: () => navigate('ustawienia/zespol') }, 'Połącz')) : null,
+      h('div', { class: 'set-group' },
+        item('zespol', linked ? `${cloud.config()?.agency || 'Momenty Agency'} · synchronizacja włączona` : 'osoby, łączenie urządzeń, zaproszenia'),
+        item('polaczenia', linked ? `Kalendarz Google ${g?.connected ? '✓' : '—'} · Canva ${cloud.connections().canva?.connected ? '✓' : '—'}` : 'Kalendarz Google, Canva'),
+        item('agencja', agencyProfile().nip ? `${agencyProfile().legalName} · NIP ${agencyProfile().nip}` : 'do umów i ofert'),
+        item('bezpieczenstwo', 'hasło, Face ID, automatyczna blokada'),
+        item('kopia', 'kopia zapasowa, kalendarz w pliku, dane przykładowe'),
+        item('instalacja', 'iPhone i komputer, przewodnik')),
+      h('p', { class: 'hint-line center' }, `Momenty Agency · wersja ${APP_VERSION}`)),
+  };
+}
+
+function settingsPage(sub) {
   const ps = M.partners();
-  const lockMin = db.kvGet('lockMinutes', 5);
-  const last = db.kvGet('lastBackup');
-  const keys = auth.passkeys();
-  const hasDemo = db.all('contacts').some((c) => c.demo) || db.all('tasks').some((t) => t.demo);
-
-  const storageEl = h('span', { class: 'muted' }, '…');
-  if (navigator.storage?.estimate) {
-    navigator.storage.estimate().then((e) => { storageEl.textContent = `${fmtBytes(e.usage || 0)} z ~${fmtBytes(e.quota || 0)}`; });
-  }
-  const persistEl = h('span', { class: 'muted' }, '…');
-  if (navigator.storage?.persisted) navigator.storage.persisted().then((p) => { persistEl.textContent = p ? 'trwała (chroniona)' : 'standardowa'; });
-
   const row = (label, value, onclick, ic) => h(onclick ? 'button' : 'div', { class: 'set-row', onclick },
     ic ? h('span', { class: 'row-ic' }, icon(ic, 20)) : null,
     h('span', { class: 'set-label' }, label), h('span', { class: 'set-value' }, value),
     onclick ? icon('chevron', 18, 'muted') : null);
-
-  return {
-    title: 'Ustawienia',
-    back: 'dzis',
-    node: h('div', { class: 'page page-narrow' },
-      cloud.isLinked() ? null : section('Zespół (to urządzenie)', h('div', { class: 'set-group' },
+  switch (sub) {
+    case 'zespol': return [
+      cloud.isLinked() ? null : section('Na tym urządzeniu', h('div', { class: 'set-group' },
         row('Osoby w agencji', ps.map((p) => p.name).join(' i '), editTeam, 'users'),
         row('Na tym urządzeniu pracuje', M.partnerName(M.me()), editTeam, 'contacts'))),
       teamSection(),
-      integrationsSection(),
-      agencySection(),
-
-      section('Bezpieczeństwo', h('div', { class: 'set-group' },
+    ];
+    case 'polaczenia': return [integrationsSection()];
+    case 'agencja': return [agencySection(), h('p', { class: 'hint-line' }, 'Dane klientów (NIP, adres) uzupełnisz w karcie klienta → Edytuj.')];
+    case 'bezpieczenstwo': {
+      const lockMin = db.kvGet('lockMinutes', 5);
+      const keys = auth.passkeys();
+      return [section('Dostęp do aplikacji', h('div', { class: 'set-group' },
         row('Zmień hasło', '', changePassword, 'lock'),
-        row('Klucze dostępu (Face ID / Touch ID / Windows Hello)', keys.length ? `${keys.length} zapisane` : 'brak', managePasskeys, 'faceid'),
+        row('Face ID / Touch ID / Windows Hello', keys.length ? `${keys.length} zapisane` : 'wyłączone', managePasskeys, 'faceid'),
         h('label', { class: 'set-row' }, h('span', { class: 'row-ic' }, icon('clock', 20)), h('span', { class: 'set-label' }, 'Automatyczna blokada po'),
           h('select', { class: 'set-select', onchange: (e) => db.kvSet('lockMinutes', Number(e.target.value)).then(() => toast('Zapisano')) },
             [[1, '1 min'], [5, '5 min'], [15, '15 min'], [30, '30 min'], [60, '1 godz.']].map(([v, l]) => h('option', { value: v, selected: v === lockMin }, l)))),
-        row('Zablokuj teraz', '', () => window.dispatchEvent(new Event('lock-now')), 'key'))),
-
-      section('Kalendarz – plik', h('div', { class: 'set-group' },
-        h('div', { class: 'set-text muted small' }, 'Bez połączenia z Kalendarzem Google możesz pobrać nadchodzące zadania jako plik .ics (z przypomnieniami) i zaimportować go w dowolnym kalendarzu.'),
-        row('Pobierz nadchodzące zadania (.ics)', '', exportIcs, 'calendar'))),
-
-      section('Kopia zapasowa', h('div', { class: 'set-group' },
-        row('Ostatnia kopia', last ? dateTime(last) : 'nigdy', null, 'download'),
-        row('Pobierz kopię (bez plików)', '', () => exportBackup(false), 'download'),
-        row('Pobierz pełną kopię (z plikami i zdjęciami)', '', () => exportBackup(true), 'download'),
-        row('Przywróć z kopii', '', importBackup, 'upload'),
-        h('div', { class: 'set-text muted small' }, cloud.isLinked() ? 'Dane są synchronizowane z serwerem agencji (z codzienną kopią zapasową po stronie Supabase w planie Pro). Dodatkowa kopia w pliku nie zaszkodzi.' : 'Dane są zapisane tylko na tym urządzeniu. Zapisuj kopię regularnie (np. w iCloud Drive) albo połącz się z serwerem agencji.'))),
-
-      section('Dane', h('div', { class: 'set-group' },
-        row('Zajęte miejsce', storageEl, null, 'files'),
-        row('Ochrona danych przed usunięciem przez przeglądarkę', persistEl, null, 'lock'),
-        hasDemo ? row('Usuń dane przykładowe', '', removeDemo, 'trash')
-          : row('Załaduj dane przykładowe', '', async () => { await loadDemo(); toast('Dodano dane przykładowe'); navigate('dzis'); }, 'ai'),
-        h('button', { class: 'set-row danger-text', onclick: wipe }, h('span', { class: 'row-ic' }, icon('trash', 20)), h('span', { class: 'set-label' }, 'Usuń wszystkie dane z tego urządzenia')))),
-
+        row('Zablokuj teraz', '', () => window.dispatchEvent(new Event('lock-now')), 'key')))];
+    }
+    case 'kopia': {
+      const last = db.kvGet('lastBackup');
+      const hasDemo = db.all('contacts').some((c) => c.demo) || db.all('tasks').some((t) => t.demo);
+      const storageEl = h('span', { class: 'muted' }, '…');
+      if (navigator.storage?.estimate) navigator.storage.estimate().then((e) => { storageEl.textContent = `${fmtBytes(e.usage || 0)} z ~${fmtBytes(e.quota || 0)}`; });
+      return [
+        section('Kopia zapasowa', h('div', { class: 'set-group' },
+          row('Ostatnia kopia', last ? dateTime(last) : 'nigdy', null, 'download'),
+          row('Pobierz kopię (bez plików)', '', () => exportBackup(false), 'download'),
+          row('Pobierz pełną kopię (z plikami i zdjęciami)', '', () => exportBackup(true), 'download'),
+          row('Przywróć z kopii', '', importBackup, 'upload'),
+          h('div', { class: 'set-text muted small' }, cloud.isLinked() ? 'Dane są synchronizowane z serwerem agencji. Dodatkowa kopia w pliku nie zaszkodzi.' : 'Dane są zapisane tylko na tym urządzeniu. Zapisuj kopię regularnie (np. w iCloud Drive) albo połącz się z zespołem.'))),
+        section('Kalendarz w pliku', h('div', { class: 'set-group' },
+          row('Pobierz nadchodzące zadania (.ics)', '', exportIcs, 'calendar'),
+          h('div', { class: 'set-text muted small' }, 'Plik z przypomnieniami do zaimportowania w dowolnym kalendarzu – gdy nie używasz połączenia z Kalendarzem Google.'))),
+        section('Dane', h('div', { class: 'set-group' },
+          row('Zajęte miejsce', storageEl, null, 'files'),
+          hasDemo ? row('Usuń dane przykładowe', '', removeDemo, 'trash')
+            : row('Załaduj dane przykładowe', '', async () => { await loadDemo(); toast('Dodano dane przykładowe'); navigate('dzis'); }, 'ai'),
+          h('button', { class: 'set-row danger-text', onclick: wipe }, h('span', { class: 'row-ic' }, icon('trash', 20)), h('span', { class: 'set-label' }, 'Usuń wszystkie dane z tego urządzenia')))),
+      ];
+    }
+    case 'instalacja': return [
       installSection(),
-      h('p', { class: 'hint-line center' }, `Momenty Agency · wersja ${APP_VERSION}`)),
-  };
+      section('Przewodnik', h('div', { class: 'set-group' }, row('Pokaż wskazówki na start', '', () => import('./more.js').then((m) => m.showTour()), 'help'))),
+    ];
+    default: return [];
+  }
 }
 
 function editTeam() {
