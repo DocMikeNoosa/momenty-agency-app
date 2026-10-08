@@ -279,7 +279,7 @@ function filesTab(p, files) {
       h('span', { class: 'row-ic canva-ic' }, canvaMark(22)),
       h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, d.title || 'Projekt Canva'), h('div', { class: 'row-meta' }, d.id ? 'połączony z Canvą' : 'link')),
       h('div', { class: 'canva-row-btns' },
-        h('a', { class: 'btn btn-soft btn-sm', href: d.edit_url || d.url, target: '_blank', rel: 'noopener' }, 'Edytuj w Canvie'),
+        canvaEditLink(p, d, canvaOn),
         canvaOn && d.id ? h('button', { class: 'btn btn-ghost btn-sm', onclick: () => importDesign(p, d) }, icon('download', 16), 'Importuj') : null,
         h('button', { class: 'icon-btn', 'aria-label': 'Usuń link', onclick: async () => { await db.put('projects', { id: p.id, canva: canvaItems.filter((x) => x !== d) }); } }, icon('close', 18))))))) : null,
     section('Pliki i zdjęcia', files.length ? filesGrid(files.sort((a, b) => b.createdAt.localeCompare(a.createdAt))) : emptyState('Brak plików. Dodaj zdjęcia, briefy, umowy lub projekty z Canvy.', null, null, 'files')));
@@ -295,7 +295,33 @@ async function addCanvaLink(p, entry) {
   await db.put('projects', { id: p.id, canva: [...cur, { ...entry, added: new Date().toISOString() }] });
 }
 
-async function importDesign(p, d, format = 'png') {
+// ---- editing in Canva and coming back ----
+// The edit link carries the project (Canva "return navigation"); the app also remembers which design was
+// opened, so when you come back (e.g. on iPhone, where Canva opens outside the app) it offers to update it.
+const b64u = (s) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function withReturn(url, projectId) {
+  try { const u = new URL(url); u.searchParams.set('correlation_state', b64u(JSON.stringify({ p: projectId }))); return u.toString(); } catch { return url; }
+}
+
+function canvaEditLink(p, d, canvaOn) {
+  const a = h('a', { class: 'btn btn-primary btn-sm', href: d.edit_url ? withReturn(d.edit_url, p.id) : d.url, target: '_blank', rel: 'noopener',
+    onclick: () => { if (d.id) db.kvSet('canvaPending', { designId: d.id, projectId: p.id, title: d.title, at: Date.now() }); } }, 'Edytuj w Canvie');
+  // edit links from Canva expire after 30 days – fetch a fresh one when connected
+  if (canvaOn && d.id) cloud.fn('canva', 'design', { id: d.id }).then((x) => { if (x?.edit_url) a.href = withReturn(x.edit_url, p.id); }).catch(() => {});
+  return a;
+}
+
+/** Called when the user comes back to the app after editing in Canva. */
+export async function canvaReturned({ designId, projectId }) {
+  const p = db.get('projects', projectId);
+  if (!p || !designId || !cloud.connections().canva?.connected) return;
+  await db.kvSet('canvaPending', null);
+  const d = (p.canva || []).find((x) => x.id === designId) || { id: designId, title: 'Canva' };
+  navigate(`projekt/${p.id}?tab=pliki`, { replace: true });
+  await importDesign(p, d);
+}
+
+export async function importDesign(p, d, format = 'png') {
   toast('Importowanie z Canvy…', { timeout: 2500 });
   try {
     const r = await cloud.fn('canva', 'export', { design_id: d.id, format });
@@ -390,7 +416,7 @@ function canvaCreate(p) {
       try {
         const d = await cloud.fn('canva', 'create', { title: `${p.title} – ${label}`, width: w, height: hh });
         await addCanvaLink(p, d);
-        clear(out).append(h('a', { class: 'btn btn-primary btn-block', href: d.edit_url, target: '_blank', rel: 'noopener', onclick: () => s.close() }, 'Otwórz w Canvie i edytuj'),
+        clear(out).append(h('a', { class: 'btn btn-primary btn-block', href: withReturn(d.edit_url, p.id), target: '_blank', rel: 'noopener', onclick: () => { db.kvSet('canvaPending', { designId: d.id, projectId: p.id, title: d.title, at: Date.now() }); s.close(); } }, 'Otwórz w Canvie i edytuj'),
           h('p', { class: 'hint-line' }, 'Po zakończeniu edycji wróć tutaj i stuknij „Importuj” przy projekcie, aby pobrać aktualną wersję.'));
       } catch (err) { toast(err.message); e.currentTarget.disabled = false; }
     } }, h('span', { class: 'row-ic' }, icon('image', 20)), h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, label), h('div', { class: 'row-meta' }, `${w} × ${hh} px`))))), out],

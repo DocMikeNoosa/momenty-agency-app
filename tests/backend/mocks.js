@@ -1,6 +1,7 @@
 // Fake Anthropic, Google and Canva endpoints for the automated tests (no real accounts are touched).
 // Tests can queue scripted AI replies with POST /__ai/script and inspect calls with GET /__log.
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PNG = fs.readFileSync(path.join(here, '../../assets/icons/icon-192.png'));
 
 const log = [];
+// Canva signs return-navigation tokens with RS256; the function verifies them against these public keys.
+const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const JWK = { ...publicKey.export({ format: 'jwk' }), kid: 'test-key', alg: 'RS256', use: 'sig' };
+function signJwt(payload, key = privateKey) {
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const data = `${enc({ alg: 'RS256', kid: 'test-key', typ: 'JWT' })}.${enc(payload)}`;
+  return `${data}.${crypto.sign('RSA-SHA256', Buffer.from(data), key).toString('base64url')}`;
+}
 let aiScript = [];
 const gEvents = new Map();
 let gSeq = 0;
@@ -81,6 +90,17 @@ http.createServer(async (req, res) => {
     }
 
     // ---------- Canva
+    if (p === '/canva/api/v1/connect/keys') return send(res, 200, { keys: [JWK] });
+    if (p === '/__canva/return-jwt') {
+      const now = Math.floor(Date.now() / 1000);
+      const payload = { aud: url.searchParams.get('aud') || 'cid', design_id: url.searchParams.get('design'), correlation_state: url.searchParams.get('state'), iat: now, exp: now + 300 };
+      const forged = url.searchParams.get('forged') ? crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey : privateKey;
+      return send(res, 200, { token: signJwt(payload, forged) });
+    }
+    if (p === '/canva/api/v1/designs/DAF1' && req.method === 'GET') {
+      if (req.headers.authorization !== 'Bearer c-access') return send(res, 401, { code: 'invalid_access_token' });
+      return send(res, 200, { design: { ...canvaDesigns[0], urls: { edit_url: 'https://www.canva.com/api/design/fresh/edit', view_url: canvaDesigns[0].urls.view_url } } });
+    }
     if (p === '/canva/api/v1/oauth/token') {
       const expected = `Basic ${Buffer.from('cid:csecret').toString('base64')}`;
       if (req.headers.authorization !== expected) return send(res, 401, { error: 'invalid_client' });

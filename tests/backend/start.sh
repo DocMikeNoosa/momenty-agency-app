@@ -82,7 +82,7 @@ env SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY"
   ANTHROPIC_API_KEY=test-anthropic-key ANTHROPIC_BASE_URL=$M AI_DAILY_LIMIT=500 \
   GOOGLE_CLIENT_ID=gclient GOOGLE_CLIENT_SECRET=gsecret GOOGLE_AUTH_URL=$M/google/auth GOOGLE_TOKEN_URL=$M/google/token \
   GOOGLE_REVOKE_URL=$M/google/revoke GOOGLE_CALENDAR_API=$M/calendar \
-  CANVA_CLIENT_ID=cid CANVA_CLIENT_SECRET=csecret CANVA_AUTH_URL=$M/canva/authorize CANVA_API=$M/canva/api \
+  CANVA_CLIENT_ID=cid CANVA_CLIENT_SECRET=csecret PUBLIC_APP_URL=http://localhost:8080/ CANVA_AUTH_URL=$M/canva/authorize CANVA_API=$M/canva/api \
   FUNCTIONS_PORT=54330 \
   nohup "$SB/deno" run --config "$ROOT/supabase/functions/deno.json" --allow-net --allow-env --allow-read "$HERE/functions-server.ts" >"$LOGS/functions.log" 2>&1 &
 echo $! > "$LOGS/functions.pid"

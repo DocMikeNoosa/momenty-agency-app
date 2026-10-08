@@ -99,11 +99,19 @@ tasks marked "Obie osoby" (both) go into **their** Google Calendar with reminder
 1. **canva.com/developers** → *Your integrations* → **Create an integration**.
 2. Scopes: `design:meta:read`, `design:content:read`, `design:content:write`, `asset:read`, `asset:write`, `profile:read`.
 3. Redirect URL: `https://YOUR_PROJECT_REF.supabase.co/functions/v1/canva/callback`
-4. Generate the client secret, then:
+4. **Return navigation** (so Canva sends you back to the app after editing): enable it and set the return URL to
+   `https://YOUR_PROJECT_REF.supabase.co/functions/v1/canva/return`
+5. Generate the client secret, then:
 
 ```bash
-npx supabase secrets set CANVA_CLIENT_ID=OC-... CANVA_CLIENT_SECRET=cnvca...
+npx supabase secrets set CANVA_CLIENT_ID=OC-... CANVA_CLIENT_SECRET=cnvca... PUBLIC_APP_URL=APP_URL
 ```
+
+How editing works: in a project's **Pliki** tab, **Edytuj w Canvie** opens the design in Canva's editor (you stay logged
+in to Canva – the app keeps the connection on the server and refreshes it automatically). When you finish, Canva brings
+you back and the new version is imported into the project. On iPhone, Canva opens outside the home-screen app; when you
+switch back to the app it shows **„Pobierz nową wersję”** – one tap updates the graphic.
+Canva's documented way for outside apps is this round trip ("return navigation"); I am not aware of a supported way to embed Canva's editor inside another app's screen.
 
 **Canva's rules (please read):** a *private* integration (only for your team, no review) requires a **Canva Enterprise**
 plan. Otherwise you create a *public* integration; while it is in draft Canva allows it for development/testing, and

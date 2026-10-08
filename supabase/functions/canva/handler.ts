@@ -3,6 +3,7 @@
 //
 // Routes: POST /canva/start · GET /canva/callback · POST /canva/status · POST /canva/designs
 //         POST /canva/create · POST /canva/export · POST /canva/disconnect
+import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'npm:jose@6.2.12';
 import {
   db, env, functionUrl, getTokens, handle, htmlPage, HttpError, json, randomToken, requireMember, saveTokens, sha256b64url, subPath,
 } from '../_shared/util.ts';
@@ -82,6 +83,24 @@ export const handler = handle(async (req) => {
     return htmlPage('Canva połączona', 'Możesz zamknąć tę kartę i wrócić do aplikacji Momenty.');
   }
 
+  // Return navigation: after editing, Canva sends the browser here with a signed token naming the design.
+  if (route === 'return' && req.method === 'GET') {
+    const token = new URL(req.url).searchParams.get('correlation_jwt') || '';
+    try {
+      const jwks = createRemoteJWKSet(new URL(`${API()}/v1/connect/keys`));
+      await jwtVerify(token, jwks, { audience: env('CANVA_CLIENT_ID') });
+    } catch {
+      return htmlPage('Nie udało się wrócić z Canvy', 'Wróć do aplikacji Momenty i stuknij „Importuj” przy projekcie.', false);
+    }
+    const claims = decodeJwt(token) as { design_id?: string; correlation_state?: string };
+    const app = Deno.env.get('PUBLIC_APP_URL');
+    const back = app ? `${app.replace(/#.*$/, '')}#/canva-powrot?design=${encodeURIComponent(claims.design_id || '')}&s=${encodeURIComponent(claims.correlation_state || '')}` : '';
+    const page = htmlPage('Zapisano w Canvie', back
+      ? `Wróć do aplikacji Momenty – nowa wersja grafiki zostanie pobrana. <br><br><a href="${back}" style="display:inline-block;padding:14px 22px;border-radius:14px;background:#FAF6F0;color:#5C0100;font-weight:700;text-decoration:none">Wróć do aplikacji</a>`
+      : 'Wróć do aplikacji Momenty – nowa wersja grafiki zostanie pobrana automatycznie.');
+    return page;
+  }
+
   if (req.method !== 'POST') throw new HttpError(405, 'Nieobsługiwane');
   const member = await requireMember(req);
   const body = await req.json().catch(() => ({}));
@@ -107,6 +126,11 @@ export const handler = handle(async (req) => {
       if (body.continuation) q.set('continuation', String(body.continuation));
       const data = await canva(member.user_id, `/v1/designs?${q}`);
       return json({ items: (data.items || []).map(summary), continuation: data.continuation || null });
+    }
+    case 'design': {
+      if (!body.id) throw new HttpError(400, 'Brak id');
+      const data = await canva(member.user_id, `/v1/designs/${encodeURIComponent(String(body.id))}`);
+      return json(summary(data.design));
     }
     case 'create': {
       const width = Math.min(Math.max(Number(body.width) || 1080, 40), 8000);

@@ -201,6 +201,15 @@ await page.waitForSelector('.tile img', { timeout: 15000 });
 ok(await page.locator('.tile-cap:has-text("Post – Premiera serum")').count() === 1, 'grafika z Canvy zaimportowana do projektu');
 ok(await page.locator('.list-row:has-text("Post – Premiera serum") a:has-text("Edytuj")').count() === 1, 'link „Edytuj w Canvie” zapisany w projekcie');
 await page.screenshot({ path: `${shots}/60-projekt-pliki.png`, fullPage: true });
+await page.waitForTimeout(800);
+const editHref = await page.locator('.list-row:has-text("Post – Premiera serum") a:has-text("Edytuj w Canvie")').getAttribute('href');
+ok(editHref.startsWith('https://www.canva.com/api/design/fresh/edit') && editHref.includes('correlation_state='), 'link do edycji w Canvie (świeży, z powrotem do projektu)');
+const projectId = page.url().match(/projekt\/([^?]+)/)[1];
+const retState = Buffer.from(JSON.stringify({ p: projectId })).toString("base64url");
+const before = await page.locator('.tile').count();
+await page.goto(`${APP}#/canva-powrot?design=DAF1&s=${retState}`);
+await page.waitForSelector('text=Zaktualizowano z Canvy', { timeout: 15000 }).then(() => ok(true, 'powrót z Canvy pobiera nową wersję grafiki')).catch(() => ok(false, 'powrót z Canvy pobiera nową wersję grafiki'));
+ok(page.url().includes(`projekt/${projectId}`) && (await page.locator('.tile').count()) === before, 'grafika zaktualizowana (bez duplikatu)');
 
 step('Instagram');
 await page.goto(`${APP}#/kontakty/influencer`);

@@ -243,6 +243,18 @@ test('Canva: connect, list, create, import (export) a design', async () => {
   assert.equal(exp.status, 200, JSON.stringify(exp.data).slice(0, 200));
   assert.equal(exp.data.mime, 'image/png');
   assert.equal(Buffer.from(exp.data.data, 'base64').subarray(1, 4).toString(), 'PNG');
+  const fresh = await call('/functions/v1/canva/design', { method: 'POST', token: partner.token, body: { id: 'DAF1' } });
+  assert.equal(fresh.data.edit_url, 'https://www.canva.com/api/design/fresh/edit', 'fresh edit link');
+  // return navigation: genuine token accepted, forged or wrong-audience token rejected
+  const good = await (await fetch(`${MOCK}/__canva/return-jwt?design=DAF1&state=eyJwIjoiMSJ9`)).json();
+  const back = await fetch(`${URL_}/functions/v1/canva/return?correlation_jwt=${good.token}`);
+  const backHtml = await back.text();
+  assert.equal(back.status, 200, backHtml);
+  assert.match(backHtml, /#\/canva-powrot\?design=DAF1&s=eyJwIjoiMSJ9/);
+  const forged = await (await fetch(`${MOCK}/__canva/return-jwt?design=DAF1&state=x&forged=1`)).json();
+  assert.equal((await fetch(`${URL_}/functions/v1/canva/return?correlation_jwt=${forged.token}`)).status, 400, 'forged token rejected');
+  const wrongAud = await (await fetch(`${MOCK}/__canva/return-jwt?design=DAF1&state=x&aud=someone-else`)).json();
+  assert.equal((await fetch(`${URL_}/functions/v1/canva/return?correlation_jwt=${wrongAud.token}`)).status, 400, 'token for another app rejected');
   const stranger403 = await call('/functions/v1/canva/designs', { method: 'POST', token: stranger.token, body: {} });
   assert.equal(stranger403.status, 403);
 });

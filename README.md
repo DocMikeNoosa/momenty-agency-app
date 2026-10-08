@@ -1,6 +1,6 @@
 # Momenty Agency – aplikacja agencji
 
-A private, phone-first app (PWA) for **Momenty Agency** (Warsaw): daily dashboard, projects with pricing and
+A private, phone-first app (PWA) for **Momenty Agency** (Warsaw) – dark bordeaux glass design with glossy buttons: daily dashboard, projects with pricing and
 contracts, clients / influencers / media / partners, photos and files, an AI assistant that acts on spoken or written
 instructions, Google Calendar reminders, Canva and Instagram helpers. Interface in Polish.
 
@@ -23,7 +23,7 @@ instructions, Google Calendar reminders, Canva and Instagram helpers. Interface 
 - **Contracts** – from template or AI, using project scope, pricing and both parties' data (always a draft to review).
 - **Instagram post / story mock-ups** for clients (PNG).
 - **Google Calendar** – each person connects once; their tasks appear with reminders matched to the task type.
-- **Canva** – import designs (PNG/PDF) into a project, create new designs that open in Canva, keep design links.
+- **Canva** – stay connected to Canva, edit a project's design in Canva and come back to an automatically updated graphic; import designs (PNG/PDF), create new designs.
 - **Security** – password + passkeys (Face ID / Touch ID / Windows Hello), auto-lock; cloud access only for invited
   members (database row-level security); API keys only on the server.
 - **Sync & backup** – two-way sync between devices, shared photo storage, JSON backups, works offline.

@@ -9,7 +9,7 @@ import {
   editTask, editProject, editContact, uploadFlow, avatar,
 } from './components.js';
 import { renderToday } from './views/today.js';
-import { renderProjects, renderProject } from './views/projects.js';
+import { renderProjects, renderProject, canvaReturned } from './views/projects.js';
 import { renderContacts, renderContact } from './views/contacts.js';
 import { renderFiles } from './views/files.js';
 import { renderAssistant, renderLetter, renderDoc, renderMockup, sendCommand } from './views/assistant.js';
@@ -188,8 +188,13 @@ const lockMs = () => db.kvGet('lockMinutes', 5) * 60000;
 ['pointerdown', 'keydown', 'scroll', 'touchstart'].forEach((ev) => window.addEventListener(ev, () => { lastActive = Date.now(); }, { passive: true }));
 setInterval(() => { if (unlocked && Date.now() - lastActive > lockMs()) showLock(); }, 15000);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) hiddenAt = Date.now();
-  else if (unlocked && hiddenAt && Date.now() - hiddenAt > lockMs()) showLock();
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (unlocked && hiddenAt && Date.now() - hiddenAt > lockMs()) { showLock(); return; }
+  // back from editing a design in Canva → offer to bring in the new version
+  const pend = db.kvGet('canvaPending');
+  if (unlocked && pend && Date.now() - pend.at < 4 * 3600000 && Date.now() - pend.at > 3000) {
+    toast(`Wróciłaś/eś z Canvy: „${pend.title || 'projekt'}”`, { action: 'Pobierz nową wersję', timeout: 20000, onAction: () => canvaReturned(pend) });
+  }
 });
 window.addEventListener('lock-now', () => showLock());
 
@@ -245,6 +250,13 @@ function render(opts = {}) {
         break;
       case 'dokument': view = renderDoc(r.params[0]); break;
       case 'ustawienia': view = renderSettings(); break;
+      case 'canva-powrot': {
+        let st = {};
+        try { st = JSON.parse(atob((r.query.get('s') || '').replace(/-/g, '+').replace(/_/g, '/'))); } catch { /* ignore */ }
+        navigate('dzis', { replace: true });
+        canvaReturned({ designId: r.query.get('design'), projectId: st.p });
+        return;
+      }
       case 'dolacz': {
         const prefill = r.raw;
         navigate('ustawienia', { replace: true });
@@ -279,7 +291,7 @@ function render(opts = {}) {
   document.body.classList.toggle('has-back', !!view.back);
   const tab = TAB_OF[r.name] ?? r.name;
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('on', el.dataset.tab === tab));
-  shell.fab.hidden = r.name === 'ustawienia' || r.name === 'dokument' || (r.name === 'asystent' && r.params.length > 0);
+  shell.fab.hidden = ['ustawienia', 'dokument', 'projekt', 'kontakt'].includes(r.name) || (r.name === 'asystent' && r.params.length > 0);
   if (sameRoute) window.scrollTo(0, y);
   else { window.scrollTo(0, 0); lastRouteKey = routeKey; }
   if (opts.keepFocus) {
